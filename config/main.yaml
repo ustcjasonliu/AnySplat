@@ -7,7 +7,7 @@ wandb:
   project: anysplat
   entity: scene-representation-group
   name: debug
-  mode: online
+  mode: disabled
 mode: train
 
 #dataset:

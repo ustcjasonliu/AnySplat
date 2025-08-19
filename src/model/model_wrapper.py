@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from pathlib import Path
+import os
 import gc
 import random
 from typing import Literal, Optional, Protocol, runtime_checkable, Any
@@ -24,6 +25,8 @@ from model.encoder.vggt.utils.pose_enc import pose_encoding_to_extri_intri
 from ..loss.loss_distill import DistillLoss
 from src.utils.render import generate_path
 from src.utils.point import get_normal_map
+from matplotlib import pyplot as plt
+
 
 from ..loss.loss_huber import HuberLoss, extri_intri_to_pose_encoding
 
@@ -38,7 +41,7 @@ from ..loss.loss_point import Regr3D
 from ..loss.loss_ssim import ssim
 from ..misc.benchmarker import Benchmarker
 from ..misc.cam_utils import update_pose, get_pnp_pose, rotation_6d_to_matrix
-from ..misc.image_io import prep_image, save_image, save_video
+from ..misc.image_io import prep_image, save_image, save_video, save_interpolated_video
 from ..misc.LocalLogger import LOG_PATH, LocalLogger
 from ..misc.nn_module_tools import convert_to_buffer
 from ..misc.step_tracker import StepTracker
@@ -171,6 +174,25 @@ class ModelWrapper(LightningModule):
             self.trainer.datamodule.val_loader.dataset.set_epoch(self.current_epoch)
         if hasattr(self.trainer.datamodule.val_loader.sampler, "set_epoch"):
             self.trainer.datamodule.val_loader.sampler.set_epoch(self.current_epoch)
+
+    def save_depth_and_rgb(self, pred_extrinsics, video, depth, save_path):
+        """Save the depth and rgb video to the save_path."""
+        num_views = pred_extrinsics.shape[1] 
+        depth_norm = (depth - depth[::num_views].quantile(0.01)) / (
+            depth[::num_views].quantile(0.99) - depth[::num_views].quantile(0.01)
+        )
+        depth_norm = plt.cm.turbo(depth_norm.cpu().detach().numpy())
+        depth_colored = (
+        torch.from_numpy(depth_norm[..., :3]).permute(0, 3, 1, 2).to(depth.device)
+        )
+        depth_colored = depth_colored.clip(min=0, max=1)
+
+        # Save depth video
+        save_video(depth_colored, os.path.join(save_path, f"depth.mp4"))
+        # Save video
+        save_video(video, os.path.join(save_path, f"rgb.mp4"))
+
+        return os.path.join(save_path, f"rgb.mp4"), os.path.join(save_path, f"depth.mp4")
         
     def training_step(self, batch, batch_idx):
         # combine batch from different dataloaders
@@ -282,6 +304,28 @@ class ModelWrapper(LightningModule):
                 f"context = {batch['context']['index'].tolist()}; "
                 f"loss = {total_loss:.6f}; "
             )
+            if self.global_step % 200  == 0:
+                ply_folder = str(self.train_cfg.output_path / "ply")
+                if not os.path.exists(ply_folder):
+                    os.makedirs(ply_folder)
+                plyfile = os.path.join(ply_folder, f"steps_{self.global_step}_gaussians.ply")     
+                print(f"Exporting Gaussians to {plyfile}")
+                export_ply(
+                    gaussians.means[0],
+                    gaussians.scales[0],
+                    gaussians.rotations[0],
+                    gaussians.harmonics[0],
+                    gaussians.opacities[0],
+                    Path(plyfile),
+                    save_sh_dc_only=True,
+                )
+                image_folder = str(self.train_cfg.output_path / "images" / f"{self.global_step}")
+                print(f"Saving images to {image_folder}")
+                if not os.path.exists(image_folder):
+                    os.makedirs(image_folder)
+                pred_all_extrinsic = pred_context_pose['extrinsic']
+                self.save_depth_and_rgb(pred_all_extrinsic, output.color[0].clip(min=0, max=1), output.depth[0], image_folder)
+               
             
         self.log("info/global_step", self.global_step)  # hack for ckpt monitor
         

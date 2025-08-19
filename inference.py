@@ -20,8 +20,8 @@ def main():
         param.requires_grad = False
     
     # Load Images
-    image_folder = "examples/vrnerf/riverview"
-    images = sorted([os.path.join(image_folder, f) for f in os.listdir(image_folder) if f.lower().endswith(('.png', '.jpg', '.jpeg'))])
+    image_folder = "/mnt/public/jason/datasets/private/test1/"
+    images = sorted([os.path.join(image_folder, f) for f in os.listdir(image_folder) if f.lower().endswith(('.png', '.jpg', '.jpeg')) and  int(os.path.splitext(f)[0]) % 5 == 0])
     images = [process_image(img_path) for img_path in images]
     images = torch.stack(images, dim=0).unsqueeze(0).to(device) # [1, K, 3, 448, 448]
     b, v, _, h, w = images.shape

@@ -122,7 +122,6 @@ def save_interpolated_video(
         # Add the current frame
         interpolated_extrinsics.append(pred_extrinsics[:, i : i + 1])
         interpolated_intrinsics.append(pred_intrinsics[:, i : i + 1])
-
         # Interpolate between current and next frame
         for j in range(1, t + 1):
             alpha = j / (t + 1)

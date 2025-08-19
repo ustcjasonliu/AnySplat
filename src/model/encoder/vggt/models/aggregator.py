@@ -206,19 +206,25 @@ class Aggregator(nn.Module):
         
         # Normalize images and reshape for patch embed
         images = (images - self._resnet_mean) / self._resnet_std
+        print("images shape before reshape:", images.shape)
 
         # Reshape to [B*S, C, H, W] for patch embedding
         images = images.view(B * S, C_in, H, W)
+        print("images shape after reshape:", images.shape)
+       
+        # DINO VIT patch embedding
         patch_tokens = self.patch_embed(images)
 
         if isinstance(patch_tokens, dict):
             patch_tokens = patch_tokens["x_norm_patchtokens"]
 
         _, P, C = patch_tokens.shape
+        print(f"patch_tokens shape: {patch_tokens.shape}, P: {P}, C: {C}")
 
         # Expand camera and register tokens to match batch size and sequence length
         camera_token = slice_expand_and_flatten(self.camera_token, B, S)
         register_token = slice_expand_and_flatten(self.register_token, B, S)
+        print(f"camera_token shape: {camera_token.shape}, register_token shape: {register_token.shape}, patch_tokens shape: {patch_tokens.shape}")
 
         # Concatenate special tokens with patch tokens
         tokens = torch.cat([camera_token, register_token, patch_tokens], dim=1)

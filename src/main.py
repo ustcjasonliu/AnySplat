@@ -50,6 +50,7 @@ def cyan(text: str) -> str:
     config_name="main",
 )
 def train(cfg_dict: DictConfig):
+    print("cfg_dict", cfg_dict)
     cfg = load_typed_root_config(cfg_dict)
     set_cfg(cfg_dict)
     
@@ -81,7 +82,7 @@ def train(cfg_dict: DictConfig):
             wandb.run.log_code("src")
     else:
         logger = LocalLogger()
-    
+    print("output_dir ", output_dir,  " every_n_train_steps ", cfg.checkpointing.every_n_train_steps)
     # Set up checkpointing.
     callbacks.append(
         ModelCheckpoint(
@@ -96,7 +97,9 @@ def train(cfg_dict: DictConfig):
     callbacks[-1].CHECKPOINT_EQUALS_CHAR = '_'
     
     # Prepare the checkpoint for loading.
+    print("cfg.checkpointing.load", cfg.checkpointing.load, "wandb", cfg.wandb)
     checkpoint_path = update_checkpoint_path(cfg.checkpointing.load, cfg.wandb)
+    print("checkpoint_path", checkpoint_path)
     
     # This allows the current step to be shared with the data loader processes.
     step_tracker = StepTracker()

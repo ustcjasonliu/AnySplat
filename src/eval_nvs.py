@@ -47,7 +47,7 @@ def evaluate(args: argparse.Namespace):
 
     # load images
     image_folder = args.data_dir
-    image_names = sorted([os.path.join(image_folder, f) for f in os.listdir(image_folder) if f.lower().endswith(('.png', '.jpg', '.jpeg'))])
+    image_names = sorted([os.path.join(image_folder, f) for f in os.listdir(image_folder) if f.lower().endswith(('.png', '.jpg', '.jpeg')) and  int(os.path.splitext(f)[0]) % 5 == 0])
     images = [process_image(img_path) for img_path in image_names]
     ctx_indices = [idx for idx, name in enumerate(image_names) if idx % args.llffhold != 0]
     tgt_indices = [idx for idx, name in enumerate(image_names) if idx % args.llffhold == 0]
@@ -83,10 +83,11 @@ def evaluate(args: argparse.Namespace):
     pred_all_context_extrinsic, pred_all_target_extrinsic = pred_all_extrinsic[:, :num_context_view], pred_all_extrinsic[:, num_context_view:]
     pred_all_context_intrinsic, pred_all_target_intrinsic = pred_all_intrinsic[:, :num_context_view], pred_all_intrinsic[:, num_context_view:]
 
-    scale_factor = pred_context_pose['extrinsic'][:, :, :3, 3].mean() / pred_all_context_extrinsic[:, :, :3, 3].mean()
+    scale_factor = 0.5 * pred_context_pose['extrinsic'][:, :, :3, 3].mean() / pred_all_context_extrinsic[:, :, :3, 3].mean()
+    print("pred_context_pose", pred_context_pose['extrinsic'].shape, " pred_all_context_extrinsic ", pred_all_context_extrinsic.shape)
     pred_all_target_extrinsic[..., :3, 3] = pred_all_target_extrinsic[..., :3, 3] * scale_factor
     pred_all_context_extrinsic[..., :3, 3] = pred_all_context_extrinsic[..., :3, 3] * scale_factor
-    print("scale_factor:", scale_factor)
+    print("scale_factor:", scale_factor, " pred_all_target_extrinsic shape ", pred_all_target_extrinsic.shape)
     
     output = model.decoder.forward(
         gaussians,

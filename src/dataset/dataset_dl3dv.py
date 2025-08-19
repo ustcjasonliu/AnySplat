@@ -76,7 +76,7 @@ class DatasetDL3DV(Dataset):
         self.data_list = []
         with open(f"{self.data_root}/{self.data_stage}_index.json", "r") as file:
             data_index = json.load(file)
-        
+        print("data root is", self.data_root, "data index is", data_index)
         self.data_list = [
             os.path.join(self.data_root, item) for item in data_index
         ]  # train: 9900 test: 140
