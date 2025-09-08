@@ -1,9 +1,12 @@
 import torch
+import numpy as np
 from einops import einsum, rearrange, reduce
 from jaxtyping import Float
 from scipy.spatial.transform import Rotation as R
 from torch import Tensor
+from typing import Tuple
 
+import roma
 
 def interpolate_intrinsics(
     initial: Float[Tensor, "*#batch 3 3"],
@@ -14,6 +17,7 @@ def interpolate_intrinsics(
     final = rearrange(final, "... i j -> ... () i j")
     t = rearrange(t, "t -> t () ()")
     return initial + (final - initial) * t
+
 
 
 def intersect_rays(
@@ -77,7 +81,6 @@ def generate_rotation_coordinate_frame(
     b[parallel] = torch.tensor([0, 0, 1], dtype=b.dtype, device=device)
     parallel = (einsum(a, b, "... i, ... i -> ...").abs() - 1).abs() < eps
     b[parallel] = torch.tensor([0, 1, 0], dtype=b.dtype, device=device)
-
     # Generate the coordinate frame. The initial cross product defines the plane.
     return generate_coordinate_frame(normalize(a.cross(b)), a)
 
@@ -127,7 +130,16 @@ def extrinsics_to_pivot_parameters(
     translation = einsum(translation_frame, delta, "... i j, ... i -> ... j")
 
     # Add the rotation elements of the pivot parametrization.
-    inverted = pivot_coordinate_frame.inverse() @ extrinsics[..., :3, :3]
+    inverted = pivot_coordinate_frame.inverse() @ extrinsics[..., :3, :3]   
+    inverted_det = torch.linalg.det(inverted[..., :3, :3])
+
+    extrinsics_det = torch.linalg.det(extrinsics[..., :3, :3])
+    pivot_coordinate_frame_det = torch.linalg.det(pivot_coordinate_frame[..., :3, :3])
+    pivot_coordinate_frame_inverse_det = torch.linalg.det(pivot_coordinate_frame.inverse()[..., :3, :3])
+
+    if (abs(inverted_det - 1.0) > 1e-4).any():
+        raise ValueError("invalid extrinsics, cannot convert to pivot parameters")
+
     y, _, z = matrix_to_euler(inverted, "YXZ").unbind(dim=-1)
 
     return torch.cat([translation, y[..., None], z[..., None]], dim=-1)
@@ -205,6 +217,84 @@ def interpolate_pivot_parameters(
 
 
 @torch.no_grad()
+def extrapolate_extrinsics(
+    trajectory: torch.Tensor,      # (*, frames, 4, 4)  这里假设 batch=1
+    inter_n,
+    extrapolate_n: int                        # 需要外推的帧数
+) -> torch.Tensor:                # 返回 (n, 4, 4)
+    """
+    用最近 inter_n 帧（或全部）外推未来 n 帧的 4×4 外参矩阵。
+    输入 shape:  (*, frames, 4, 4)  这里 batch 维度被 squeeze 掉
+    输出 shape:  (n, 4, 4)
+    """
+    traj = trajectory.squeeze()          # (frames, 4, 4)
+    frames = traj.shape[0]
+    k = min(inter_n, frames)                   # 若不足 5 帧就用全部
+    recent = traj[-k:].cpu().numpy()           # (k,4,4)
+    # 1. 平移向量 t
+    t = recent[:, :3, 3]                 # (k, 3)
+    # 2. 旋转矩阵 → 四元数 (x,y,z,w)
+    rot = R.from_matrix(recent[:, :3, :3])
+    q = rot.as_quat()                    # (k,4)
+    # 时间轴简单用索引 0..k-1
+    t_idx = np.arange(k, dtype=np.float32)
+    # 拟合平移：三次多项式
+    t_poly = [np.polyfit(t_idx, t[:, i], deg=min(3, k-1)) for i in range(3)]
+    # 拟合四元数角速度：用 SLERP 算平均角速度
+    if k == 1:
+        omega = np.zeros(3)
+    else:
+        delta_q = (R.from_quat(q[:-1]).inv()
+                   * R.from_quat(q[1:]))
+        angles = delta_q.magnitude()
+        omega = R.from_rotvec(delta_q[0].as_rotvec()
+                                     / (t_idx[1] - t_idx[0])).as_rotvec()
+
+    # 外推
+    pred_t_list, pred_q_list = [], []
+    for i in range(1, extrapolate_n+1):
+        new_t = np.array([np.polyval(p, k-1 + i) for p in t_poly])
+        pred_t_list.append(new_t)
+
+        step_rot = R.from_rotvec(omega * i)
+        new_q = (R.from_quat(q[-1]) * step_rot).as_quat()
+        pred_q_list.append(new_q)
+
+    # 组装 4×4
+    pred_T = torch.zeros(trajectory.shape[0],extrapolate_n, 4, 4)
+    pred_T[:,:, 3, 3] = 1.0
+    pred_T[:,:, :3, 3] = torch.tensor(np.stack(pred_t_list))
+    pred_R = R.from_quat(np.stack(pred_q_list)).as_matrix()
+    pred_T[:, :, :3, :3] = torch.tensor(pred_R)
+
+    return pred_T.cuda()
+
+
+def linear_interpolate_extrinsics(
+    initial: Tensor,  # (n,4,4)
+    final: Tensor,    # (n,4,4)
+    T_mid: int,       # 要插入的中间帧数
+) -> Tensor:          # (n, T_mid, 4, 4)
+    n = initial.size(0)
+    device = initial.device
+    # 生成 (1/(T_mid+1), ..., T_mid/(T_mid+1))
+    t = torch.linspace(1/(T_mid+1), T_mid/(T_mid+1), T_mid, device=device)
+
+    R0, t0 = initial[:, :3, :3], initial[:, :3, 3]  # (n,3,3)  (n,3)
+    R1, t1 = final[:, :3, :3],   final[:, :3, 3]
+
+    # 旋转 SLERP：roma.rotmat_slerp 返回 (T_mid, n, 3, 3) -> (n, T_mid, 3, 3)
+    R_mid = roma.rotmat_slerp(R0, R1, t).permute(1, 0, 2, 3)
+    # 平移线性
+    t_mid = t0[:, None, :] + t.view(1, T_mid, 1) * (t1[:, None, :] - t0[:, None, :])
+    # 拼 4×4
+    pose = torch.eye(4, device=device).repeat(n, T_mid, 1, 1)
+    pose[:, :, :3, :3] = R_mid
+    pose[:, :, :3, 3]  = t_mid
+    return pose
+
+
+@torch.no_grad()
 def interpolate_extrinsics(
     initial: Float[Tensor, "*#batch 4 4"],
     final: Float[Tensor, "*#batch 4 4"],
@@ -253,3 +343,48 @@ def interpolate_extrinsics(
         rearrange(pivot_frame, "... i j -> ... () i j").type(torch.float32),
         rearrange(pivot_point, "... xyz -> ... () xyz").type(torch.float32),
     )
+
+
+
+def interpolate_trajectory(extrinsics, intrinsics, inter_n, max_n = 5):
+    *B, F, _, _ = extrinsics.shape
+    device = extrinsics.device
+    dtype = extrinsics.dtype
+
+    # 过滤非法外参
+    det = torch.linalg.det(extrinsics[..., :3, :3])
+    invalid = abs(det - 1.0) > 1e-4
+    if invalid.any():
+        print("Warning: filter illegal extrinsics", invalid.sum().item(), "帧")
+        extrinsics = extrinsics[..., ~invalid, :, :]
+        intrinsics = intrinsics[..., ~invalid, :, :]
+        F = extrinsics.size(-3)
+
+    if F < 2:
+        raise ValueError("less than 2 valid extrinsics, cannot interpolate")
+
+    t = torch.linspace(0, 1, inter_n + 2, device=device, dtype=torch.float64)[1:-1]
+
+    extr_a = extrinsics[..., :-1, :, :].reshape(-1, 4, 4)
+    extr_b = extrinsics[..., 1:,  :, :].reshape(-1, 4, 4)
+    intr_a = intrinsics[..., :-1, :, :].reshape(-1, 3, 3)
+    intr_b = intrinsics[..., 1:,  :, :].reshape(-1, 3, 3)
+    extr_a_det = torch.linalg.det(extr_a[..., :3, :3])
+    extr_b_det = torch.linalg.det(extr_b[..., :3, :3])
+    if ((abs(extr_a_det - 1.0) > 1e-4).any() or \
+        (abs(extr_b_det - 1.0) > 1e-4).any()):
+        raise ValueError("invalid extrinsics, cannot interpolate")
+
+    extr_mid = linear_interpolate_extrinsics(extr_a, extr_b, inter_n)
+    intr_mid = interpolate_intrinsics(intr_a, intr_b, t)
+    # for i in range(extr_b.shape[0]):
+    #     print("extr_a", extr_a[i], "extr_b", extr_b[i], "extr_mid", extr_mid[i], "intr_a", intr_a[i], "intr_b", intr_b[i],  "intr_mid", intr_mid[i])
+    
+    extr_all = extr_mid.reshape(*B, (F - 1) * inter_n, 4, 4).type(dtype)
+    intr_all = intr_mid.reshape(*B, (F - 1) * inter_n, 3, 3).type(dtype)
+    # if extr_all.size(1) > max_n:
+    #     indices = torch.randperm(extr_all.size(1))[:max_n]
+    #     extr_all = extr_all[:, indices]
+    #     intr_all = intr_all[:, indices]
+    #     print(f"Warning: too many interpolated frames, randomly sample {max_n} frames")
+    return extr_all, intr_all

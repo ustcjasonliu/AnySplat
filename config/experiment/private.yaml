@@ -1,14 +1,14 @@
 # @package _global_
 
 defaults:
-  - /dataset@_group_.dl3dv: dl3dv
+  - /dataset@_group_.private: private
   - override /model/encoder: anysplat
   - override /model/encoder/backbone: croco
   - override /loss: [mse, lpips, depth_consis] # ablate: opacity loss
 
 wandb:
-  name: dl3dv
-  tags: [dl3dv, 448x448]
+  name: private
+  tags: [private, 448x448]
   
 model:
   encoder:
@@ -31,10 +31,9 @@ model:
     intermediate_layer_idx: [4, 11, 17, 23]
     
 dataset:
-  dl3dv:
+  private:
     input_image_shape: [224, 448]
     view_sampler:
-      num_context_views: 16
       num_target_views: 2
       min_distance_between_context_views: 32
       max_distance_between_context_views: 256
@@ -63,8 +62,8 @@ trainer:
   precision: bf16-mixed
 
 checkpointing:
-  load: /mnt/public/jason/AnySplat/history_cpkt/epoch_7599-step_7600.ckpt
-  every_n_train_steps: 100
+  load: null
+  every_n_train_steps: 200
   save_weights_only: false
   save_top_k: 5
   

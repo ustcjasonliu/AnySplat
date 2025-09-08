@@ -101,7 +101,6 @@ class CameraHead(nn.Module):
         pose_tokens = self.token_norm(pose_tokens)
         
         pred_pose_enc_list = self.trunk_fn(pose_tokens, num_iterations)
-        print(f"CameraHead predicted {len(pred_pose_enc_list)}. {pred_pose_enc_list[0].shape} iterations.")
         return pred_pose_enc_list
 
     def trunk_fn(self, pose_tokens: torch.Tensor, num_iterations: int) -> list:

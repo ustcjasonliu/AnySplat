@@ -27,6 +27,8 @@ class AnySplat(nn.Module, huggingface_hub.PyTorchModelHubMixin):
         self.decoder_cfg = decoder_cfg
         self.build_encoder(encoder_cfg)
         self.build_decoder(decoder_cfg)
+        self._gaussians = None
+        self._default_device = None
 
     def convert_nested_config(self, cfg_dict: dict, target_class: type):
         """Convert nested dictionary config to dataclass instance
@@ -99,9 +101,24 @@ class AnySplat(nn.Module, huggingface_hub.PyTorchModelHubMixin):
     ):
         self.encoder.distill = False
         encoder_output = self.encoder(context_image, global_step=0, visualization_dump=None)
-        gaussians, pred_context_pose = encoder_output.gaussians, encoder_output.pred_context_pose
-        return gaussians, pred_context_pose
-    
+        self._gaussians , pred_context_pose = encoder_output.gaussians, encoder_output.pred_context_pose
+        return self._gaussians, pred_context_pose
+
+    def get_gaussian_splat_results(self, extrinsics, intrinsics, h, w ,v, near: float = 0.01, far: float = 100.0):
+        if self._default_device is None:
+            return None
+        output = self.decoder.forward(
+            self._gaussians ,
+            extrinsics,
+            intrinsics,
+            torch.ones(1, v, device=self._default_device) * near,
+            torch.ones(1, v, device=self._default_device) * far,
+            (h, w) ,
+            "depth",
+        )
+        return output
+
+
     def forward(self, 
         context_image: torch.Tensor,
         global_step: int = 0,
@@ -110,15 +127,15 @@ class AnySplat(nn.Module, huggingface_hub.PyTorchModelHubMixin):
         far: float = 100.0,
     ):
         b, v, c, h, w = context_image.shape
-        device = context_image.device
+        self._default_device = context_image.device
         encoder_output = self.encoder(context_image, global_step, visualization_dump=visualization_dump)
-        gaussians, pred_context_pose = encoder_output.gaussians, encoder_output.pred_context_pose
+        self._gaussians , pred_context_pose = encoder_output.gaussians, encoder_output.pred_context_pose
         output = self.decoder.forward(
-            gaussians,
+            self._gaussians ,
             pred_context_pose['extrinsic'],
             pred_context_pose["intrinsic"],
-            torch.ones(1, v, device=device) * near,
-            torch.ones(1, v, device=device) * far,
+            torch.ones(1, v, device= self._default_device) * near,
+            torch.ones(1, v, device= self._default_device) * far,
             (h, w),
             "depth",
         )

@@ -333,7 +333,6 @@ class EncoderAnySplat(Encoder[EncoderAnySplatCfg]):
     ) -> Gaussians:
         device = image.device
         b, v, _, h, w = image.shape
-        print("image shape:", image.shape)
         distill_infos = {}
         if self.distill:
             distill_image = image.clone().detach()
@@ -407,7 +406,6 @@ class EncoderAnySplat(Encoder[EncoderAnySplatCfg]):
                 image.to(torch.bfloat16),
                 intermediate_layer_idx=self.cfg.intermediate_layer_idx,
             )
-            print("aggregated_tokens_list:", len(aggregated_tokens_list), " and ", aggregated_tokens_list[0].shape)
 
         with torch.amp.autocast("cuda", enabled=False):
             pred_pose_enc_list = self.camera_head(aggregated_tokens_list)

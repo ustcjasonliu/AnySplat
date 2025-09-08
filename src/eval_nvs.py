@@ -20,6 +20,10 @@ from src.utils.image import process_image
 
 from src.model.model.anysplat import AnySplat
 from src.model.encoder.vggt.utils.pose_enc import pose_encoding_to_extri_intri
+from src.model.ply_export import export_ply, save_poses
+
+import open3d as o3d
+
 
 def setup_args():
     """Set up command-line arguments for the eval NVS script."""
@@ -35,6 +39,8 @@ def compute_metrics(pred_image, image):
     lpips = compute_lpips(pred_image, image)
     return psnr, ssim, lpips
 
+
+
 def evaluate(args: argparse.Namespace):
     model = AnySplat.from_pretrained("lhjiang/anysplat")
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -47,7 +53,7 @@ def evaluate(args: argparse.Namespace):
 
     # load images
     image_folder = args.data_dir
-    image_names = sorted([os.path.join(image_folder, f) for f in os.listdir(image_folder) if f.lower().endswith(('.png', '.jpg', '.jpeg')) and  int(os.path.splitext(f)[0]) % 5 == 0])
+    image_names = sorted([os.path.join(image_folder, f) for f in os.listdir(image_folder) if f.lower().endswith(('.png', '.jpg', '.jpeg')) and  int(os.path.splitext(f)[0].split('_')[-1]) % 5 == 0])
     images = [process_image(img_path) for img_path in image_names]
     ctx_indices = [idx for idx, name in enumerate(image_names) if idx % args.llffhold != 0]
     tgt_indices = [idx for idx, name in enumerate(image_names) if idx % args.llffhold == 0]
@@ -96,7 +102,7 @@ def evaluate(args: argparse.Namespace):
         torch.ones(1, v, device=device) * 0.01,
         torch.ones(1, v, device=device) * 100,
         (h, w)
-        )
+    )
 
     save_interpolated_video(pred_all_context_extrinsic, pred_all_context_intrinsic, b, h, w, gaussians, args.output_path, model.decoder)
     
@@ -109,7 +115,29 @@ def evaluate(args: argparse.Namespace):
 
     # compute metrics
     psnr, ssim, lpips = compute_metrics(output.color[0], tgt_images[0])
+
+    save_poses('poses.pkl', pred_all_context_extrinsic, pred_all_target_extrinsic)
+    
+    plyfile = os.path.join("./", "gaussians.ply")
+    export_ply(
+        gaussians.means[0],
+        gaussians.scales[0],
+        gaussians.rotations[0],
+        gaussians.harmonics[0],
+        gaussians.opacities[0],
+        Path(plyfile),
+        save_sh_dc_only=True,
+    )
+    
     print(f"PSNR: {psnr.mean():.2f}, SSIM: {ssim.mean():.3f}, LPIPS: {lpips.mean():.3f}")
+
+
+
+
+
+
+ 
+
 
 if __name__ == "__main__":
     args = setup_args()

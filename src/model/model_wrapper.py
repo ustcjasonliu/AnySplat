@@ -3,6 +3,7 @@ from pathlib import Path
 import os
 import gc
 import random
+import shutil
 from typing import Literal, Optional, Protocol, runtime_checkable, Any
 
 import moviepy.editor as mpy
@@ -21,6 +22,7 @@ import torch.nn.functional as F
 from loss.loss_lpips import LossLpips
 from loss.loss_mse import LossMse
 from model.encoder.vggt.utils.pose_enc import pose_encoding_to_extri_intri
+
 
 from ..loss.loss_distill import DistillLoss
 from src.utils.render import generate_path
@@ -48,8 +50,10 @@ from ..misc.step_tracker import StepTracker
 from ..misc.utils import inverse_normalize, vis_depth_map, confidence_map, get_overlap_tag
 from ..visualization.annotation import add_label
 from ..visualization.camera_trajectory.interpolation import (
+    extrapolate_extrinsics,
     interpolate_extrinsics,
     interpolate_intrinsics,
+    interpolate_trajectory
 )
 from ..visualization.camera_trajectory.wobble import (
     generate_wobble,
@@ -61,7 +65,8 @@ from ..visualization.layout import add_border, hcat, vcat
 from .decoder.decoder import Decoder, DepthRenderingMode
 from .encoder import Encoder
 from .encoder.visualization.encoder_visualizer import EncoderVisualizer
-from .ply_export import export_ply
+from .ply_export import export_ply, save_poses
+from src.diffix3d.diffix_util import DiffixUtil
 
 @dataclass
 class OptimizerCfg:
@@ -135,6 +140,7 @@ class ModelWrapper(LightningModule):
         step_tracker: StepTracker | None
     ) -> None:
         super().__init__()
+        self._diffix_util = DiffixUtil()
         self.optimizer_cfg = optimizer_cfg
         self.test_cfg = test_cfg
         self.train_cfg = train_cfg
@@ -159,6 +165,7 @@ class ModelWrapper(LightningModule):
 
         # This is used for testing.
         self.benchmarker = Benchmarker()
+        self.diffusion_steps = 0
         
     def on_train_epoch_start(self) -> None:
         # our custom dataset and sampler has to have epoch set by calling set_epoch
@@ -175,9 +182,9 @@ class ModelWrapper(LightningModule):
         if hasattr(self.trainer.datamodule.val_loader.sampler, "set_epoch"):
             self.trainer.datamodule.val_loader.sampler.set_epoch(self.current_epoch)
 
-    def save_depth_and_rgb(self, pred_extrinsics, video, depth, save_path):
+    def save_depth_and_rgb(self, num_views, num_origin_views, video, depth, save_path):
         """Save the depth and rgb video to the save_path."""
-        num_views = pred_extrinsics.shape[1] 
+     
         depth_norm = (depth - depth[::num_views].quantile(0.01)) / (
             depth[::num_views].quantile(0.99) - depth[::num_views].quantile(0.01)
         )
@@ -186,17 +193,71 @@ class ModelWrapper(LightningModule):
         torch.from_numpy(depth_norm[..., :3]).permute(0, 3, 1, 2).to(depth.device)
         )
         depth_colored = depth_colored.clip(min=0, max=1)
+        print("depth_colored shape:", depth_colored.shape, "video shape:", video.shape)
+        save_video(depth_colored[:num_origin_views], os.path.join(save_path, f"predict_context_depth.mp4"))
+        save_video(video[:num_origin_views], os.path.join(save_path, f"predict_context_rgb.mp4"))
+        if num_views > num_origin_views:
+            save_video(depth_colored[num_origin_views:], os.path.join(save_path, f"predict_interpolate_depth.mp4"))
+            save_video(video[num_origin_views:], os.path.join(save_path, f"predict_interpolate_context_rgb.mp4"))
 
-        # Save depth video
-        save_video(depth_colored, os.path.join(save_path, f"depth.mp4"))
-        # Save video
-        save_video(video, os.path.join(save_path, f"rgb.mp4"))
+  
+    
+    def update_batch_by_diffusion(self, batch: BatchedExample) -> BatchedExample:
+        """Update the batch by diffusion."""
+        if self.model._gaussians is  None:
+            print("No gaussians in the model, skipping diffusion.")
+            return batch
+        # extra_extrinsics = extrapolate_extrinsics(batch["context"]["extrinsics"], 5, num_exploration_views)
+        # extra_intrinsics = batch["context"]["intrinsics"][-1,-1].repeat(1, num_exploration_views, 1, 1)  
+        interpolate_num = 1
+        extra_extrinsics, extra_intrinsics = interpolate_trajectory(
+            batch["context"]["extrinsics"], batch["context"]["intrinsics"], interpolate_num
+        )
+        b, v, c, h, w = batch["context"]["image"].shape
+        extra_b, extra_v, _ , _ = extra_extrinsics.shape
+        render_result = self.model.get_gaussian_splat_results(extra_extrinsics, extra_intrinsics, h, w, v)
+        if render_result is None:
+            print("No render result, skipping batch.")
+            return batch    
 
-        return os.path.join(save_path, f"rgb.mp4"), os.path.join(save_path, f"depth.mp4")
-        
+
+        diffix_images = self._diffix_util.process_images(
+            input_images=render_result.color,
+            ref_image=batch["context"]["image"])
+
+        if self.diffusion_steps % 10 == 0 :
+            global_step_save_folder = str(self.train_cfg.output_path / f"steps_{self.global_step}_train_log")
+            if not os.path.exists(global_step_save_folder):
+                os.makedirs(global_step_save_folder)
+            save_video(batch["context"]["image"][0], os.path.join(global_step_save_folder, f"origin_rgb.mp4"))
+            save_video(render_result.color[0], os.path.join(global_step_save_folder, f"rendered_rgb.mp4"))
+            save_video(diffix_images[0], os.path.join(global_step_save_folder, f"diffix_rgb.mp4"))
+            project_poses_file = os.path.join(global_step_save_folder, "project_poses_file.pkl")
+            save_poses(project_poses_file, batch["context"]["extrinsics"], extra_extrinsics)
+
+
+        batch["context"]["image"] = torch.cat([batch["context"]["image"], diffix_images], dim=1)
+        batch["context"]["depth"] = torch.cat([batch["context"]["depth"], render_result.depth], dim=1)
+        extend_indexes = torch.arange(extra_v, device=batch["context"]["image"].device) + batch["context"]["index"][0][-1] + 1
+        extend_indexes = extend_indexes.unsqueeze(0)
+        batch["context"]["index"] = torch.cat([batch["context"]["index"], extend_indexes], dim=1)
+        batch["context"]["extrinsics"] = torch.cat([batch["context"]["extrinsics"], extra_extrinsics], dim=1)
+        batch["context"]["intrinsics"] = torch.cat([batch["context"]["intrinsics"], extra_intrinsics], dim=1)
+
+        return batch 
+
+
+    def has_sufficient_space(self, path, min_space_gb=10):
+        usage = shutil.disk_usage(path)
+        print(f"Disk space - Total: {usage.total // (1024**3)} GB, Used: {usage.used // (1024**3)} GB, Free: {usage.free // (1024**3)} GB")
+        return usage.free > min_space_gb * (1024**3)
+
     def training_step(self, batch, batch_idx):
         # combine batch from different dataloaders
         # torch.cuda.empty_cache()
+        if self.has_sufficient_space(str(self.train_cfg.output_path)) == False:
+            raise RuntimeError("Not enough disk space, stopping training to avoid OOM.")
+
         if isinstance(batch, list):
             batch_combined = None
             for batch_per_dl in batch:
@@ -212,15 +273,19 @@ class ModelWrapper(LightningModule):
                         else:
                             raise NotImplementedError
             batch = batch_combined
+    
         
         batch: BatchedExample = self.data_shim(batch)
         b, v, c, h, w = batch["context"]["image"].shape
+        print(f"Training step {self.global_step} on Rank {self.global_rank}, batch size {b}, num context views {v}.")
+        if v > 5 and v <= 10:
+            self.diffusion_steps += 1
+            batch = self.update_batch_by_diffusion(batch)
         context_image = (batch["context"]["image"] + 1) / 2
-        
         # Run the model.
         visualization_dump = None
 
-        encoder_output, output = self.model(context_image, self.global_step, visualization_dump=visualization_dump)
+        encoder_output, extended_output = self.model(context_image, self.global_step, visualization_dump=visualization_dump)
         gaussians, pred_pose_enc_list, depth_dict = encoder_output.gaussians, encoder_output.pred_pose_enc_list, encoder_output.depth_dict
         pred_context_pose = encoder_output.pred_context_pose
         infos = encoder_output.infos
@@ -231,11 +296,13 @@ class ModelWrapper(LightningModule):
         using_index = torch.arange(num_context_views, device=gaussians.means.device)
         batch["using_index"] = using_index
         
-        target_gt = (batch["context"]["image"] + 1) / 2
+        target_gt = (batch["context"]["image"]+ 1) / 2
         scene_scale = infos["scene_scale"]
         self.log("train/scene_scale", infos["scene_scale"])
         self.log("train/voxelize_ratio", infos["voxelize_ratio"])
 
+
+        output = extended_output
         # Compute metrics.
         psnr_probabilistic = compute_psnr(
             rearrange(target_gt, "b v c h w -> (b v) c h w"),
@@ -289,6 +356,7 @@ class ModelWrapper(LightningModule):
         # Skip batch if loss is too high after certain step
         SKIP_AFTER_STEP = 1000  
         LOSS_THRESHOLD = 0.2
+        pred_all_extrinsic = pred_context_pose['extrinsic']
         if self.global_step > SKIP_AFTER_STEP and total_loss > LOSS_THRESHOLD:
             print(f"Skipping batch with high loss ({total_loss:.6f}) at step {self.global_step} on Rank {self.global_rank}")
             # set to a really small number
@@ -296,7 +364,7 @@ class ModelWrapper(LightningModule):
 
         if (
             self.global_rank == 0
-            and self.global_step % self.train_cfg.print_log_every_n_steps == 0
+            and (self.global_step % self.train_cfg.print_log_every_n_steps == 0 or num_context_views > v)
         ):
             print(
                 f"train step {self.global_step}; "
@@ -304,11 +372,12 @@ class ModelWrapper(LightningModule):
                 f"context = {batch['context']['index'].tolist()}; "
                 f"loss = {total_loss:.6f}; "
             )
-            if self.global_step % 200  == 0:
-                ply_folder = str(self.train_cfg.output_path / "ply")
-                if not os.path.exists(ply_folder):
-                    os.makedirs(ply_folder)
-                plyfile = os.path.join(ply_folder, f"steps_{self.global_step}_gaussians.ply")     
+            if self.diffusion_steps % 10 == 0 and num_context_views > v:
+                global_step_save_folder = str(self.train_cfg.output_path / f"steps_{self.global_step}_train_log")
+                if not os.path.exists(global_step_save_folder):
+                    os.makedirs(global_step_save_folder)
+           
+                plyfile = os.path.join(global_step_save_folder, "gaussians.ply")     
                 print(f"Exporting Gaussians to {plyfile}")
                 export_ply(
                     gaussians.means[0],
@@ -319,13 +388,14 @@ class ModelWrapper(LightningModule):
                     Path(plyfile),
                     save_sh_dc_only=True,
                 )
-                image_folder = str(self.train_cfg.output_path / "images" / f"{self.global_step}")
-                print(f"Saving images to {image_folder}")
-                if not os.path.exists(image_folder):
-                    os.makedirs(image_folder)
-                pred_all_extrinsic = pred_context_pose['extrinsic']
-                self.save_depth_and_rgb(pred_all_extrinsic, output.color[0].clip(min=0, max=1), output.depth[0], image_folder)
-               
+           
+                self.save_depth_and_rgb(num_context_views, v, output.color[0].clip(min=0, max=1), output.depth[0], global_step_save_folder)
+                predict_context_extrinsics = pred_all_extrinsic[:, :v]
+                predict_extra_extrinsics = pred_all_extrinsic[:, v:]
+                save_predict_poses_file = os.path.join(global_step_save_folder, "predict_poses.pkl")
+                save_poses(save_predict_poses_file, predict_context_extrinsics, predict_extra_extrinsics)
+
+
             
         self.log("info/global_step", self.global_step)  # hack for ckpt monitor
         

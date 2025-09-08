@@ -1,9 +1,9 @@
 defaults:
   - base_dataset
-  - view_sampler: rank
+  - view_sampler: bounded
 
-name: dl3dv
-roots: [/mnt/public/jason/datasets/DL3DV/DL3DV-Benchmark/]
+name: private
+roots: [/mnt/public/jason/datasets/private/]
 
 input_image_shape: [256, 256]
 original_image_shape: [540, 960]

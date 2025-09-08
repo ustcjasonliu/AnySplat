@@ -99,6 +99,7 @@ class DataModule(LightningDataModule):
         
     def train_dataloader(self):
         dataset, datasets_ls = get_dataset(self.dataset_cfgs, "train", self.step_tracker, self.dataset_shim)
+        
         world_size = get_world_size()
         rank = get_rank()
         # breakpoint()

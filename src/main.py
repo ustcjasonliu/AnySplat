@@ -22,26 +22,28 @@ from src.misc.weight_modify import checkpoint_filter_fn
 
 import warnings
 warnings.filterwarnings("ignore")
+import shutil
 
 # Configure beartype and jaxtyping.
-with install_import_hook(
-    ("src",),
-    ("beartype", "beartype"),
-):
-    from src.config import load_typed_root_config
-    from src.dataset.data_module import DataModule
-    from src.global_cfg import set_cfg
-    from src.loss import get_losses
-    from src.misc.LocalLogger import LocalLogger
-    from src.misc.step_tracker import StepTracker
-    from src.misc.wandb_tools import update_checkpoint_path
-    from src.model.decoder import get_decoder
-    from src.model.encoder import get_encoder
-    from src.model.model_wrapper import ModelWrapper
+# with install_import_hook(
+#     ("src",),
+#     ("beartype", "beartype"),
+# ):
+from src.config import load_typed_root_config
+from src.dataset.data_module import DataModule
+from src.global_cfg import set_cfg
+from src.loss import get_losses
+from src.misc.LocalLogger import LocalLogger
+from src.misc.step_tracker import StepTracker
+from src.misc.wandb_tools import update_checkpoint_path
+from src.model.decoder import get_decoder
+from src.model.encoder import get_encoder
+from src.model.model_wrapper import ModelWrapper
 
 
 def cyan(text: str) -> str:
     return f"{Fore.CYAN}{text}{Fore.RESET}"
+
 
 
 @hydra.main(
@@ -98,8 +100,10 @@ def train(cfg_dict: DictConfig):
     
     # Prepare the checkpoint for loading.
     print("cfg.checkpointing.load", cfg.checkpointing.load, "wandb", cfg.wandb)
+    #checkpoint_path = output_dir / "checkpoints" / "last.ckpt" 
     checkpoint_path = update_checkpoint_path(cfg.checkpointing.load, cfg.wandb)
     print("checkpoint_path", checkpoint_path)
+   
     
     # This allows the current step to be shared with the data loader processes.
     step_tracker = StepTracker()
@@ -148,6 +152,7 @@ def train(cfg_dict: DictConfig):
     )
     
     if cfg.mode == "train":
+        print("checkpoint_path", checkpoint_path)
         trainer.fit(model_wrapper, datamodule=data_module, ckpt_path=checkpoint_path)
     else:
         trainer.test(

@@ -36,7 +36,7 @@ class GaussianAdapter(nn.Module):
             persistent=False,
         )
         for degree in range(1, self.cfg.sh_degree + 1):
-            self.sh_mask[degree**2 : (degree + 1) ** 2] = 0.1 * 0.25**degree
+            self.sh_mask[degree**2 : (degree + 1) ** 2] = 0 #0.1 * 0.25**degree
 
     def forward(
         self,
@@ -63,10 +63,10 @@ class GaussianAdapter(nn.Module):
 
         # Normalize the quaternion features to yield a valid quaternion.
         rotations = rotations / (rotations.norm(dim=-1, keepdim=True) + eps)
-
+       
         sh = rearrange(sh, "... (xyz d_sh) -> ... xyz d_sh", xyz=3)
         sh = sh.broadcast_to((*opacities.shape, 3, self.d_sh)) * self.sh_mask
-
+       
         # Create world-space covariance matrices.
         covariances = build_covariance(scales, rotations)
         c2w_rotations = extrinsics[..., :3, :3]
@@ -166,7 +166,6 @@ class Unet3dGaussianAdapter(GaussianAdapter):
         
         sh = rearrange(sh, "... (xyz d_sh) -> ... xyz d_sh", xyz=3)
         sh = sh.broadcast_to((*opacities.shape, 3, self.d_sh)) * self.sh_mask
-
         covariances = build_covariance(scales, rotations)
         
         return Gaussians(

@@ -92,7 +92,10 @@ class DatasetDL3DV(Dataset):
                 self.scene_ids[index] = scene_id
                 index += 1
         print(f"DL3DV: {self.stage}: loaded {len(self.scene_ids)} scenes")
-        
+        self.batch_size = 10
+        self.batch_index = 0
+        self.num_batches = len(self.scene_ids) // self.batch_size + 1
+
     def convert_intrinsics(self, meta_data):
         store_h, store_w = meta_data["h"], meta_data["w"]
         fx, fy, cx, cy = (
@@ -180,7 +183,6 @@ class DatasetDL3DV(Dataset):
     def getitem(self, index: int, num_context_views: int, patchsize: tuple) -> dict:
         
         scene = self.scene_ids[index]
-        
         example = self.scenes[scene]
         # load poses
         extrinsics = []
@@ -197,12 +199,19 @@ class DatasetDL3DV(Dataset):
         intrinsics = torch.tensor(intrinsics, dtype=torch.float32)
         
         try:
-            context_indices, target_indices, overlap = self.view_sampler.sample(
-                scene,
-                num_context_views,
-                extrinsics,
-                intrinsics,
-            )
+            # context_indices, target_indices, overlap = self.view_sampler.sample(
+            #     scene,
+            #     num_context_views,
+            #     extrinsics,
+            #     intrinsics,
+            # )
+            total_frame_size , _ , _ = extrinsics.shape
+            context_indices = torch.arange(self.batch_index * self.batch_size, min((self.batch_index + 1) * self.batch_size, total_frame_size))
+            next_batch_index = (self.batch_index + 1) % self.batch_size
+            target_indices = torch.arange(next_batch_index * self.batch_size, min(next_batch_index * self.batch_size + 2, total_frame_size))
+            overlap = torch.tensor([0.])
+            print(f"scene {scene}, context indices: {context_indices}, target indices: {target_indices}, overlap: {overlap}")
+            self.batch_index = (self.batch_index + 1) % self.batch_size
         except ValueError:
             # Skip because the example doesn't have enough frames.
             raise Exception("Not enough frames")
@@ -210,7 +219,7 @@ class DatasetDL3DV(Dataset):
         # Skip the example if the field of view is too wide.
         if (get_fov(intrinsics).rad2deg() > self.cfg.max_fov).any():
             raise Exception("Field of view too wide")
-        
+      
         # Load the images.
         input_frames = [example[i] for i in context_indices]
         target_frame = [example[i] for i in target_indices]
@@ -259,7 +268,6 @@ class DatasetDL3DV(Dataset):
 
         if torch.isnan(extrinsics).any() or torch.isinf(extrinsics).any():
             raise Exception("encounter nan or inf in input poses")
-
         example = {
             "context": {
                 "extrinsics": extrinsics[context_indices],
@@ -289,7 +297,6 @@ class DatasetDL3DV(Dataset):
             intr_aug = True
         else:
             intr_aug = False
-        
         example = apply_crop_shim(example, (patchsize[0] * 14, patchsize[1] * 14), intr_aug=intr_aug)
 
         image_size = example["context"]["image"].shape[2:]
@@ -341,6 +348,7 @@ class DatasetDL3DV(Dataset):
     def __getitem__(self, index_tuple: tuple) -> dict:
         index, num_context_views, patchsize_h = index_tuple
         patchsize_w = (self.cfg.input_image_shape[1] // 14)
+        patchsize_h = 24
         try:
             return self.getitem(index, num_context_views, (patchsize_h, patchsize_w))
         except Exception as e:
