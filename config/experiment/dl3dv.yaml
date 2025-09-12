@@ -63,7 +63,7 @@ trainer:
   precision: bf16-mixed
 
 checkpointing:
-  load: /mnt/public/jason/AnySplat/history_cpkt/epoch_7599-step_7600.ckpt
+  load:
   every_n_train_steps: 100
   save_weights_only: false
   save_top_k: 5
