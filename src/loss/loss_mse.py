@@ -53,7 +53,7 @@ class LossMse(Loss[LossMseCfg, LossMseCfgWrapper]):
         # Rearrange and mask predicted and ground truth images
         pred_img = prediction.color.permute(0, 1, 3, 4, 2)[mask] 
         gt_img = ((batch["context"]["image"][:, batch["using_index"]] + 1) / 2).permute(0, 1, 3, 4, 2)[mask]
-
+        
         delta = pred_img - gt_img
 
         return self.cfg.weight * torch.nan_to_num((delta**2).mean(), nan=0.0, posinf=0.0, neginf=0.0)

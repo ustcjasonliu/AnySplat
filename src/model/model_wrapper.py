@@ -192,7 +192,7 @@ class ModelWrapper(LightningModule):
         )
         depth_norm = plt.cm.turbo(depth_norm.cpu().detach().numpy())
         depth_colored = (
-        torch.from_numpy(depth_norm[..., :3]).permute(0, 3, 1, 2).to(depth.device)
+            torch.from_numpy(depth_norm[..., :3]).permute(0, 3, 1, 2).to(depth.device)
         )
         depth_colored = depth_colored.clip(min=0, max=1)
         print("depth_colored shape:", depth_colored.shape, "video shape:", video.shape)
@@ -209,8 +209,6 @@ class ModelWrapper(LightningModule):
         if self.model._gaussians is  None:
             print("No gaussians in the model, skipping diffusion.")
             return batch, None
-
-        print("input batch shape 1 ", batch["context"]["image"].shape)
         # extra_extrinsics = extrapolate_extrinsics(batch["context"]["extrinsics"], 5, num_exploration_views)
         # extra_intrinsics = batch["context"]["intrinsics"][-1,-1].repeat(1, num_exploration_views, 1, 1)  
         interpolate_num = 1
@@ -228,7 +226,7 @@ class ModelWrapper(LightningModule):
             input_images=render_result.color,
             ref_image=batch["context"]["image"])
 
-        if self.diffusion_steps % 10 == 0 :
+        if self.diffusion_steps % 100 == 0 :
             global_step_save_folder = str(self.train_cfg.output_path / f"steps_{self.global_step}_train_log")
             if not os.path.exists(global_step_save_folder):
                 os.makedirs(global_step_save_folder)
@@ -258,8 +256,6 @@ class ModelWrapper(LightningModule):
         full_batch["context"]["index"] = torch.cat([batch["context"]["index"], extend_indexes], dim=1)
         full_batch["context"]["extrinsics"] = torch.cat([batch["context"]["extrinsics"], extra_extrinsics], dim=1)
         full_batch["context"]["intrinsics"] = torch.cat([batch["context"]["intrinsics"], extra_intrinsics], dim=1)
-        print("input batch shape 4 ", batch["context"]["image"].shape)
-
         return full_batch, extended_batch
 
 
@@ -357,6 +353,7 @@ class ModelWrapper(LightningModule):
             for loss_fn in self.losses:
                 loss = loss_fn.forward(output, batch, gaussians, depth_dict, self.global_step)
                 self.log(f"loss/{loss_fn.name}", loss)
+                print(f"loss/{loss_fn.name}:{loss} ")
                 total_loss = total_loss + loss
 
             if depth_dict is not None and "depth" in get_cfg()["loss"].keys() and self.train_cfg.cxt_depth_weight > 0:
@@ -374,12 +371,30 @@ class ModelWrapper(LightningModule):
                 self.log("loss/distill_depth", loss_distill_list['loss_depth'])
                 self.log("loss/distill_normal", loss_distill_list['loss_normal'])
                 total_loss = total_loss + loss_distill_list['loss_distill']
-        
+            
+            if gaussians is not None:
+                b, v, c, h, w = batch["context"]["image"].shape
+                render_result = self.model.get_gaussian_splat_results(batch["target"]["extrinsics"], 
+                                                                      batch["target"]["intrinsics"], 
+                                                                      h, w, v)
+                # valid_mask = batch['target']['valid_mask']
+                rendered_rgb = render_result.color
+                gt_img = (batch["target"]["image"] + 1) / 2
+                delta = rendered_rgb - gt_img
+                loss_predition = get_cfg()[ 'loss']['mse']['weight'] * torch.nan_to_num((delta**2).mean(), nan=0.0, posinf=0.0, neginf=0.0)
+                global_step_save_folder = str(self.train_cfg.output_path / f"steps_{self.global_step}_train_log")
+                if self.global_step % 100 == 0:
+                    print("gt image shape ", gt_img[0].shape, "rendered rgb shape ", rendered_rgb[0].shape)
+                    save_video(gt_img[0], os.path.join(global_step_save_folder, f"nvs_gt_image.mp4"))
+                    save_video(rendered_rgb[0], os.path.join(global_step_save_folder, f"nvs_render_image.mp4"))
+                print(f"loss_predition: {loss_predition}")
+                self.log("loss/loss_predition", loss_predition)
+                total_loss += loss_predition
         self.log("loss/total", total_loss)
         print(f"total_loss: {total_loss}")
         return total_loss
 
-    def save_for_visualization(self,  num_views, num_origin_views, output, encoder_output):
+    def save_for_visualization(self, num_views, num_origin_views, output, encoder_output):
         global_step_save_folder = str(self.train_cfg.output_path / f"steps_{self.global_step}_train_log")
         if not os.path.exists(global_step_save_folder):
             os.makedirs(global_step_save_folder)
@@ -402,10 +417,39 @@ class ModelWrapper(LightningModule):
         save_predict_poses_file = os.path.join(global_step_save_folder, "predict_poses.pkl")
         save_poses(save_predict_poses_file, predict_context_extrinsics, predict_extra_extrinsics)
 
+    def print_gpu_memory(self, prefix, unit="GB", rank=0):
+        """
+        打印当前进程可见的 GPU 显存占用。
+        参数
+        ----
+        unit : str, 可选 "B", "KB", "MB", "GB"
+        rank : int, 要查看的卡号；默认 0。若机器只有 1 张卡可忽略。
+        """
+        # 换算因子
+        div = {"B": 1, "KB": 1024, "MB": 1024**2, "GB": 1024**3}[unit]
+
+        # 确保该卡对当前进程可见
+        if rank >= torch.cuda.device_count():
+            print(f"GPU {rank} 不存在，当前机器只有 {torch.cuda.device_count()} 张卡")
+            return
+
+        with torch.cuda.device(rank):
+            # 1. PyTorch 已分配（张量实际占用）
+            allocated = torch.cuda.memory_allocated()          # 字节
+            # 2. PyTorch 已预留（缓存池）
+            reserved  = torch.cuda.memory_reserved()           # 字节
+            # 3. 驱动级总占用 / 总容量
+            free, total = torch.cuda.mem_get_info()            # 字节
+
+        print(f"==={prefix} GPU {rank} 显存快照 ({unit}) ===")
+        print(f"PyTorch Allocated : {allocated/div:7.3f} {unit}")
+        print(f"PyTorch Reserved  : {reserved /div:7.3f} {unit}")
+        print(f"Driver Used       : {(total-free)/div:7.3f} {unit}")
+        print(f"Driver Total      : {total/div:7.3f} {unit}")
+        print("-" * 35)
 
 
     def training_step(self, batch, batch_idx):
-        print("====================train step====================")
         # combine batch from different dataloaders
         # torch.cuda.empty_cache()
         if self.has_sufficient_space(str(self.train_cfg.output_path)) == False:
@@ -427,11 +471,9 @@ class ModelWrapper(LightningModule):
                             raise NotImplementedError
             batch = batch_combined
     
-        
+        self.print_gpu_memory("Step1")
         batch: BatchedExample = self.data_shim(batch)
         b, v, c, h, w = batch["context"]["image"].shape
-        print("input batch shape ", batch["context"]["image"].shape)
-        print(f"Training step {self.global_step} on Rank {self.global_rank}, batch size {b}, num context views {v}.")
        
         if v > 5 and v <= 10:
             self.diffusion_steps += 1
@@ -439,15 +481,12 @@ class ModelWrapper(LightningModule):
         else:
             full_batch = batch
             extended_batch = None
-
-        print("update batch shape ", batch["context"]["image"].shape)
-
         context_image = (full_batch["context"]["image"] + 1) / 2
         # Run the model.
         visualization_dump = None
         encoder_output, extended_output = self.model(context_image, self.global_step, visualization_dump=visualization_dump)
         origin_encoder_output, extended_encoder_output, origin_output, extend_output = self.split_predict_result(encoder_output, extended_output, v)
-
+        self.print_gpu_memory("Step2")
         pred_context_pose = encoder_output.pred_context_pose
         infos = encoder_output.infos
         scene_scale = infos["scene_scale"]
@@ -456,14 +495,13 @@ class ModelWrapper(LightningModule):
         using_index = torch.arange(v, device=encoder_output.gaussians.means.device)
         batch["using_index"] = using_index
 
-        print("batch image shape ", batch["context"]["image"].shape, " origin  output image  shape", origin_output.color.shape)
         total_loss = self.compute_loss(batch, origin_encoder_output, origin_output)
         if self.global_step % 100 == 0:
             self.compute_metrics(batch, origin_encoder_output, origin_output)
         if self.diffusion_steps % 100 == 0:
             self.save_for_visualization(full_batch["context"]["image"].shape[1], batch["context"]["image"].shape[1], origin_output, origin_encoder_output)
 
-     
+        self.print_gpu_memory("Step3")
         # Skip batch if loss is too high after certain step
         SKIP_AFTER_STEP = 1000  
         LOSS_THRESHOLD = 0.2
@@ -485,13 +523,13 @@ class ModelWrapper(LightningModule):
             )
           
         self.log("info/global_step", self.global_step)  # hack for ckpt monitor
-        
+        self.print_gpu_memory("Step4")
         # Tell the data loader processes about the current step.
         if self.step_tracker is not None:
             self.step_tracker.set_step(self.global_step)
         
         del batch
-        if self.global_step % 50 == 0:
+        if self.global_step % 10 == 0:
             gc.collect()
             torch.cuda.empty_cache()
 
