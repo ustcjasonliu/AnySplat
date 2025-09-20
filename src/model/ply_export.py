@@ -12,8 +12,8 @@ import pickle
 
 
 def save_poses(save_path: str,
-                       pred_all_context_extrinsic: torch.Tensor,
-                       pred_all_target_extrinsic: torch.Tensor):
+               pred_all_context_extrinsic: torch.Tensor,
+               pred_all_target_extrinsic: torch.Tensor):
     """
     一次性保存并可视化两组位姿序列
     :param save_path: 保存文件路径（例如 'poses.pkl'）

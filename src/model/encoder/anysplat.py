@@ -547,17 +547,17 @@ class EncoderAnySplat(Encoder[EncoderAnySplatCfg]):
         infos = {}
         infos["scene_scale"] = scene_scale
         infos["voxelize_ratio"] = densities.shape[1] / (h * w * v)
+        if global_step % 100  == 0:
+            print(
+                f"scene scale: {scene_scale:.3f}, pixel-wise num: {h*w*v}, after voxelize: {neural_pts.shape[1]}, voxelize ratio: {infos['voxelize_ratio']:.3f}"
+            )
+            print(
+                f"Gaussians attributes: \n"
+                f"opacities: mean: {gaussians.opacities.mean()}, min: {gaussians.opacities.min()}, max: {gaussians.opacities.max()} \n"
+                f"scales: mean: {gaussians.scales.mean()}, min: {gaussians.scales.min()}, max: {gaussians.scales.max()}"
+            )
 
-        print(
-            f"scene scale: {scene_scale:.3f}, pixel-wise num: {h*w*v}, after voxelize: {neural_pts.shape[1]}, voxelize ratio: {infos['voxelize_ratio']:.3f}"
-        )
-        print(
-            f"Gaussians attributes: \n"
-            f"opacities: mean: {gaussians.opacities.mean()}, min: {gaussians.opacities.min()}, max: {gaussians.opacities.max()} \n"
-            f"scales: mean: {gaussians.scales.mean()}, min: {gaussians.scales.min()}, max: {gaussians.scales.max()}"
-        )
-
-        print("B:", b, "V:", v, "H:", h, "W:", w)
+            print("B:", b, "V:", v, "H:", h, "W:", w)
         extrinsic_padding = (
             torch.tensor([0, 0, 0, 1], device=device, dtype=extrinsic.dtype)
             .view(1, 1, 1, 4)

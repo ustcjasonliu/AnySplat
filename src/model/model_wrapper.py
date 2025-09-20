@@ -24,7 +24,7 @@ from loss.loss_mse import LossMse
 from model.encoder.vggt.utils.pose_enc import pose_encoding_to_extri_intri
 
 
-from ..loss.loss_distill import DistillLoss
+from ..loss.loss_distill import DistillLoss, huber_loss
 from src.utils.render import generate_path
 from src.utils.point import get_normal_map
 from matplotlib import pyplot as plt
@@ -195,7 +195,6 @@ class ModelWrapper(LightningModule):
             torch.from_numpy(depth_norm[..., :3]).permute(0, 3, 1, 2).to(depth.device)
         )
         depth_colored = depth_colored.clip(min=0, max=1)
-        print("depth_colored shape:", depth_colored.shape, "video shape:", video.shape)
         save_video(depth_colored[:num_origin_views], os.path.join(save_path, f"predict_context_depth.mp4"))
         save_video(video[:num_origin_views], os.path.join(save_path, f"predict_context_rgb.mp4"))
         if num_views > num_origin_views:
@@ -349,17 +348,22 @@ class ModelWrapper(LightningModule):
         gaussians, pred_pose_enc_list, depth_dict = encoder_output.gaussians, encoder_output.pred_pose_enc_list, encoder_output.depth_dict
         distill_infos = encoder_output.distill_infos
         depth_dict['distill_infos'] = distill_infos
+        if self.global_step % 100 == 0:
+            print("=============gloabal step ", self.global_step, " loss=============")
         with torch.amp.autocast('cuda', enabled=False):
             for loss_fn in self.losses:
                 loss = loss_fn.forward(output, batch, gaussians, depth_dict, self.global_step)
                 self.log(f"loss/{loss_fn.name}", loss)
-                print(f"loss/{loss_fn.name}:{loss} ")
+                if self.global_step % 100 == 0:
+                    print(f"loss/{loss_fn.name}:{loss} ")
                 total_loss = total_loss + loss
 
             if depth_dict is not None and "depth" in get_cfg()["loss"].keys() and self.train_cfg.cxt_depth_weight > 0:
                 depth_loss_idx = list(get_cfg()["loss"].keys()).index("depth")
                 depth_loss_fn = self.losses[depth_loss_idx].ctx_depth_loss
                 loss_depth = depth_loss_fn(depth_dict["depth_map"], depth_dict["depth_conf"], batch, cxt_depth_weight=self.train_cfg.cxt_depth_weight)
+                if self.self.global_step % 100 == 0:
+                    print("loss/ctx_depth", loss_depth)
                 self.log("loss/ctx_depth", loss_depth)
                 total_loss = total_loss + loss_depth
 
@@ -370,6 +374,11 @@ class ModelWrapper(LightningModule):
                 self.log("loss/distill_pose", loss_distill_list['loss_pose'])
                 self.log("loss/distill_depth", loss_distill_list['loss_depth'])
                 self.log("loss/distill_normal", loss_distill_list['loss_normal'])
+                if self.global_step % 100 == 0:
+                    print("loss/distill ", loss_distill_list['loss_distill'])
+                    print("loss/distill_pose ", loss_distill_list['loss_pose'])
+                    print("loss/distill_depth ", loss_distill_list['loss_depth'])
+                    print("loss/distill_normal ", loss_distill_list['loss_normal'])
                 total_loss = total_loss + loss_distill_list['loss_distill']
             
             if gaussians is not None:
@@ -383,15 +392,21 @@ class ModelWrapper(LightningModule):
                 delta = rendered_rgb - gt_img
                 loss_predition = get_cfg()[ 'loss']['mse']['weight'] * torch.nan_to_num((delta**2).mean(), nan=0.0, posinf=0.0, neginf=0.0)
                 global_step_save_folder = str(self.train_cfg.output_path / f"steps_{self.global_step}_train_log")
-                if self.global_step % 100 == 0:
-                    print("gt image shape ", gt_img[0].shape, "rendered rgb shape ", rendered_rgb[0].shape)
+                total_loss += loss_predition
+                self.log("loss/loss_predition", loss_predition)
+                loss_prediction_pose = self.loss_pose(pred_pose_enc_list, batch)
+                total_loss += loss_prediction_pose["loss_camera"]
+                if self.global_step% 100 == 0:
                     save_video(gt_img[0], os.path.join(global_step_save_folder, f"nvs_gt_image.mp4"))
                     save_video(rendered_rgb[0], os.path.join(global_step_save_folder, f"nvs_render_image.mp4"))
-                print(f"loss_predition: {loss_predition}")
-                self.log("loss/loss_predition", loss_predition)
-                total_loss += loss_predition
+                    save_nvs_poses_file = os.path.join(global_step_save_folder, "nvs_poses.pkl")
+                    save_poses(save_nvs_poses_file, batch["context"]["extrinsics"], batch["target"]["extrinsics"])
+                    print(f"loss_predition: {loss_predition}")
+                    print("loss_prediction_pose ", loss_prediction_pose["loss_camera"])
+             
         self.log("loss/total", total_loss)
-        print(f"total_loss: {total_loss}")
+        if self.global_step % 100 == 0:
+            print(f"total_loss: {total_loss}")
         return total_loss
 
     def save_for_visualization(self, num_views, num_origin_views, output, encoder_output):
@@ -452,8 +467,8 @@ class ModelWrapper(LightningModule):
     def training_step(self, batch, batch_idx):
         # combine batch from different dataloaders
         # torch.cuda.empty_cache()
-        if self.has_sufficient_space(str(self.train_cfg.output_path)) == False:
-            raise RuntimeError("Not enough disk space, stopping training to avoid OOM.")
+        # if self.has_sufficient_space(str(self.train_cfg.output_path)) == False:
+        #     raise RuntimeError("Not enough disk space, stopping training to avoid OOM.")
 
         if isinstance(batch, list):
             batch_combined = None
@@ -471,7 +486,7 @@ class ModelWrapper(LightningModule):
                             raise NotImplementedError
             batch = batch_combined
     
-        self.print_gpu_memory("Step1")
+        # self.print_gpu_memory("Step1")
         batch: BatchedExample = self.data_shim(batch)
         b, v, c, h, w = batch["context"]["image"].shape
        
@@ -486,7 +501,7 @@ class ModelWrapper(LightningModule):
         visualization_dump = None
         encoder_output, extended_output = self.model(context_image, self.global_step, visualization_dump=visualization_dump)
         origin_encoder_output, extended_encoder_output, origin_output, extend_output = self.split_predict_result(encoder_output, extended_output, v)
-        self.print_gpu_memory("Step2")
+        # self.print_gpu_memory("Step2")
         pred_context_pose = encoder_output.pred_context_pose
         infos = encoder_output.infos
         scene_scale = infos["scene_scale"]
@@ -498,10 +513,9 @@ class ModelWrapper(LightningModule):
         total_loss = self.compute_loss(batch, origin_encoder_output, origin_output)
         if self.global_step % 100 == 0:
             self.compute_metrics(batch, origin_encoder_output, origin_output)
-        if self.diffusion_steps % 100 == 0:
             self.save_for_visualization(full_batch["context"]["image"].shape[1], batch["context"]["image"].shape[1], origin_output, origin_encoder_output)
 
-        self.print_gpu_memory("Step3")
+        # self.print_gpu_memory("Step3")
         # Skip batch if loss is too high after certain step
         SKIP_AFTER_STEP = 1000  
         LOSS_THRESHOLD = 0.2
@@ -523,7 +537,7 @@ class ModelWrapper(LightningModule):
             )
           
         self.log("info/global_step", self.global_step)  # hack for ckpt monitor
-        self.print_gpu_memory("Step4")
+        # self.print_gpu_memory("Step4")
         # Tell the data loader processes about the current step.
         if self.step_tracker is not None:
             self.step_tracker.set_step(self.global_step)
