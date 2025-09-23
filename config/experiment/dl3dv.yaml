@@ -63,7 +63,7 @@ trainer:
   precision: bf16-mixed
 
 checkpointing:
-  load: null
+  load:  null
   every_n_train_steps: 100
   save_weights_only: false
   save_top_k: 5
@@ -74,7 +74,7 @@ train:
   cxt_depth_weight: 0.0
   weight_pose: 10.0
   weight_depth: 1.0
-  weight_normal: 0.0
+  weight_normal: 1.0
 
 hydra:
   run:

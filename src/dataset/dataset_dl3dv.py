@@ -92,7 +92,7 @@ class DatasetDL3DV(Dataset):
                 self.scene_ids[index] = scene_id
                 index += 1
         print(f"DL3DV: {self.stage}: loaded {len(self.scene_ids)} scenes")
-        self.batch_size = 6
+        self.batch_size = 4
         self.batch_index = 0
         self.num_batches = len(self.scene_ids) // self.batch_size + 1
 
@@ -210,11 +210,11 @@ class DatasetDL3DV(Dataset):
             context_indices = torch.arange(self.batch_index * self.batch_size, min((self.batch_index + 1) * self.batch_size, total_frame_size))
             next_batch_index = (self.batch_index + 1) % total_batch_num
             target_indices = torch.arange(start = next_batch_index * self.batch_size, 
-                                        end = min((next_batch_index + 1)* self.batch_size , total_frame_size),
-                                        step = 2)
+                                          end = min((next_batch_index + 1)* self.batch_size , total_frame_size),
+                                          step = 3)
             overlap = torch.tensor([0.])
-            #print(f"scene {scene}, context indices: {context_indices}, target indices: {target_indices}, overlap: {overlap}")
-            self.batch_index = next_batch_index
+            print(f"scene {scene}, context indices: {context_indices}, target indices: {target_indices}, overlap: {overlap}")
+            #self.batch_index = next_batch_index
         except ValueError:
             # Skip because the example doesn't have enough frames.
             raise Exception("Not enough frames")
@@ -294,8 +294,8 @@ class DatasetDL3DV(Dataset):
             "scene": "dl3dv_"+scene,
         }
         # print("example context index ", context_indices , " target index ", target_indices)
-        if self.stage == "train" and self.cfg.augment:
-            example = apply_augmentation_shim(example)
+        # if self.stage == "train" and self.cfg.augment:
+        #     example = apply_augmentation_shim(example)
 
         if self.stage == "train" and self.cfg.intr_augment:
             intr_aug = True

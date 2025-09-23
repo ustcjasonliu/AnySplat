@@ -167,7 +167,7 @@ class ModelWrapper(LightningModule):
 
         # This is used for testing.
         self.benchmarker = Benchmarker()
-        self.diffusion_steps = 0
+        self.save_interval = 100
         
     def on_train_epoch_start(self) -> None:
         # our custom dataset and sampler has to have epoch set by calling set_epoch
@@ -224,18 +224,16 @@ class ModelWrapper(LightningModule):
         diffix_images = self._diffix_util.process_images(
             input_images=render_result.color,
             ref_image=batch["context"]["image"])
-
-        if self.diffusion_steps % 100 == 0 :
+        if self.global_step % self.save_interval == 0 :
             global_step_save_folder = str(self.train_cfg.output_path / f"steps_{self.global_step}_train_log")
             if not os.path.exists(global_step_save_folder):
                 os.makedirs(global_step_save_folder)
-            save_video(batch["context"]["image"][0], os.path.join(global_step_save_folder, f"origin_rgb.mp4"))
+            origin_image =  (batch["context"]["image"]+ 1) / 2
+            save_video(origin_image[0], os.path.join(global_step_save_folder, f"origin_rgb.mp4"))
             save_video(render_result.color[0], os.path.join(global_step_save_folder, f"rendered_rgb.mp4"))
             save_video(diffix_images[0], os.path.join(global_step_save_folder, f"diffix_rgb.mp4"))
             project_poses_file = os.path.join(global_step_save_folder, "project_poses_file.pkl")
             save_poses(project_poses_file, batch["context"]["extrinsics"], extra_extrinsics)
-
-
         
         extended_batch = copy.deepcopy(batch) 
         extended_batch["context"]["image"] = diffix_images
@@ -348,13 +346,13 @@ class ModelWrapper(LightningModule):
         gaussians, pred_pose_enc_list, depth_dict = encoder_output.gaussians, encoder_output.pred_pose_enc_list, encoder_output.depth_dict
         distill_infos = encoder_output.distill_infos
         depth_dict['distill_infos'] = distill_infos
-        if self.global_step % 100 == 0:
+        if self.global_step % self.save_interval == 0:
             print("=============gloabal step ", self.global_step, " loss=============")
         with torch.amp.autocast('cuda', enabled=False):
             for loss_fn in self.losses:
                 loss = loss_fn.forward(output, batch, gaussians, depth_dict, self.global_step)
                 self.log(f"loss/{loss_fn.name}", loss)
-                if self.global_step % 100 == 0:
+                if self.global_step % self.save_interval == 0:
                     print(f"loss/{loss_fn.name}:{loss} ")
                 total_loss = total_loss + loss
 
@@ -362,7 +360,7 @@ class ModelWrapper(LightningModule):
                 depth_loss_idx = list(get_cfg()["loss"].keys()).index("depth")
                 depth_loss_fn = self.losses[depth_loss_idx].ctx_depth_loss
                 loss_depth = depth_loss_fn(depth_dict["depth_map"], depth_dict["depth_conf"], batch, cxt_depth_weight=self.train_cfg.cxt_depth_weight)
-                if self.self.global_step % 100 == 0:
+                if self.self.global_step % self.save_interval  == 0:
                     print("loss/ctx_depth", loss_depth)
                 self.log("loss/ctx_depth", loss_depth)
                 total_loss = total_loss + loss_depth
@@ -374,7 +372,7 @@ class ModelWrapper(LightningModule):
                 self.log("loss/distill_pose", loss_distill_list['loss_pose'])
                 self.log("loss/distill_depth", loss_distill_list['loss_depth'])
                 self.log("loss/distill_normal", loss_distill_list['loss_normal'])
-                if self.global_step % 100 == 0:
+                if self.global_step % self.save_interval == 0:
                     print("loss/distill ", loss_distill_list['loss_distill'])
                     print("loss/distill_pose ", loss_distill_list['loss_pose'])
                     print("loss/distill_depth ", loss_distill_list['loss_depth'])
@@ -396,7 +394,7 @@ class ModelWrapper(LightningModule):
                 self.log("loss/loss_predition", loss_predition)
                 loss_prediction_pose = self.loss_pose(pred_pose_enc_list, batch)
                 total_loss += loss_prediction_pose["loss_camera"]
-                if self.global_step% 100 == 0:
+                if self.global_step % self.save_interval == 0:
                     save_video(gt_img[0], os.path.join(global_step_save_folder, f"nvs_gt_image.mp4"))
                     save_video(rendered_rgb[0], os.path.join(global_step_save_folder, f"nvs_render_image.mp4"))
                     save_nvs_poses_file = os.path.join(global_step_save_folder, "nvs_poses.pkl")
@@ -405,7 +403,7 @@ class ModelWrapper(LightningModule):
                     print("loss_prediction_pose ", loss_prediction_pose["loss_camera"])
              
         self.log("loss/total", total_loss)
-        if self.global_step % 100 == 0:
+        if self.global_step % self.save_interval == 0:
             print(f"total_loss: {total_loss}")
         return total_loss
 
@@ -490,8 +488,7 @@ class ModelWrapper(LightningModule):
         batch: BatchedExample = self.data_shim(batch)
         b, v, c, h, w = batch["context"]["image"].shape
        
-        if v > 5 and v <= 10:
-            self.diffusion_steps += 1
+        if v >= 4 and v <= 10:
             full_batch, extended_batch = self.update_batch_by_diffusion(batch)
         else:
             full_batch = batch
@@ -511,7 +508,7 @@ class ModelWrapper(LightningModule):
         batch["using_index"] = using_index
 
         total_loss = self.compute_loss(batch, origin_encoder_output, origin_output)
-        if self.global_step % 100 == 0:
+        if self.global_step % self.save_interval == 0:
             self.compute_metrics(batch, origin_encoder_output, origin_output)
             self.save_for_visualization(full_batch["context"]["image"].shape[1], batch["context"]["image"].shape[1], origin_output, origin_encoder_output)
 
