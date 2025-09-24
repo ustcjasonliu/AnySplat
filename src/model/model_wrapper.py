@@ -211,9 +211,11 @@ class ModelWrapper(LightningModule):
         # extra_extrinsics = extrapolate_extrinsics(batch["context"]["extrinsics"], 5, num_exploration_views)
         # extra_intrinsics = batch["context"]["intrinsics"][-1,-1].repeat(1, num_exploration_views, 1, 1)  
         interpolate_num = 1
-        extra_extrinsics, extra_intrinsics = interpolate_trajectory(
-            batch["context"]["extrinsics"], batch["context"]["intrinsics"], interpolate_num
-        )
+        # extra_extrinsics, extra_intrinsics = interpolate_trajectory(
+        #     batch["context"]["extrinsics"], batch["context"]["intrinsics"], interpolate_num
+        # )
+
+        extra_extrinsics, extra_intrinsics = batch["target"]["extrinsics"], batch["target"]["intrinsics"]
         b, v, c, h, w = batch["context"]["image"].shape
         extra_b, extra_v, _ , _ = extra_extrinsics.shape
         render_result = self.model.get_gaussian_splat_results(extra_extrinsics, extra_intrinsics, h, w, v)
@@ -365,19 +367,19 @@ class ModelWrapper(LightningModule):
                 self.log("loss/ctx_depth", loss_depth)
                 total_loss = total_loss + loss_depth
 
-            if distill_infos is not None:
-                # distill ctx pred_pose & depth & normal
-                loss_distill_list = self.loss_distill(distill_infos, pred_pose_enc_list, output, batch)
-                self.log("loss/distill", loss_distill_list['loss_distill'])
-                self.log("loss/distill_pose", loss_distill_list['loss_pose'])
-                self.log("loss/distill_depth", loss_distill_list['loss_depth'])
-                self.log("loss/distill_normal", loss_distill_list['loss_normal'])
-                if self.global_step % self.save_interval == 0:
-                    print("loss/distill ", loss_distill_list['loss_distill'])
-                    print("loss/distill_pose ", loss_distill_list['loss_pose'])
-                    print("loss/distill_depth ", loss_distill_list['loss_depth'])
-                    print("loss/distill_normal ", loss_distill_list['loss_normal'])
-                total_loss = total_loss + loss_distill_list['loss_distill']
+            # if distill_infos is not None:
+            #     # distill ctx pred_pose & depth & normal
+            #     loss_distill_list = self.loss_distill(distill_infos, pred_pose_enc_list, output, batch)
+            #     self.log("loss/distill", loss_distill_list['loss_distill'])
+            #     self.log("loss/distill_pose", loss_distill_list['loss_pose'])
+            #     self.log("loss/distill_depth", loss_distill_list['loss_depth'])
+            #     self.log("loss/distill_normal", loss_distill_list['loss_normal'])
+            #     if self.global_step % self.save_interval == 0:
+            #         print("loss/distill ", loss_distill_list['loss_distill'])
+            #         print("loss/distill_pose ", loss_distill_list['loss_pose'])
+            #         print("loss/distill_depth ", loss_distill_list['loss_depth'])
+            #         print("loss/distill_normal ", loss_distill_list['loss_normal'])
+            #     total_loss = total_loss + loss_distill_list['loss_distill']
             
             if gaussians is not None:
                 b, v, c, h, w = batch["context"]["image"].shape
@@ -388,10 +390,11 @@ class ModelWrapper(LightningModule):
                 rendered_rgb = render_result.color
                 gt_img = (batch["target"]["image"] + 1) / 2
                 delta = rendered_rgb - gt_img
-                loss_predition = get_cfg()[ 'loss']['mse']['weight'] * torch.nan_to_num((delta**2).mean(), nan=0.0, posinf=0.0, neginf=0.0)
+                loss_predition_rgb = get_cfg()[ 'loss']['mse']['weight'] * torch.nan_to_num((delta**2).mean(), nan=0.0, posinf=0.0, neginf=0.0)
+                loss_predition_lpips = compute_lpips(gt_img[0], rendered_rgb[0]).mean()
+                total_loss += loss_predition_rgb + loss_predition_lpips
                 global_step_save_folder = str(self.train_cfg.output_path / f"steps_{self.global_step}_train_log")
-                total_loss += loss_predition
-                self.log("loss/loss_predition", loss_predition)
+                self.log("loss/loss_predition_rgb", loss_predition_rgb)
                 loss_prediction_pose = self.loss_pose(pred_pose_enc_list, batch)
                 total_loss += loss_prediction_pose["loss_camera"]
                 if self.global_step % self.save_interval == 0:
@@ -399,8 +402,9 @@ class ModelWrapper(LightningModule):
                     save_video(rendered_rgb[0], os.path.join(global_step_save_folder, f"nvs_render_image.mp4"))
                     save_nvs_poses_file = os.path.join(global_step_save_folder, "nvs_poses.pkl")
                     save_poses(save_nvs_poses_file, batch["context"]["extrinsics"], batch["target"]["extrinsics"])
-                    print(f"loss_predition: {loss_predition}")
+                    print(f"loss_predition_rgb: {loss_predition_rgb}")
                     print("loss_prediction_pose ", loss_prediction_pose["loss_camera"])
+                    print("loss_predition_lpips ", loss_predition_lpips)
              
         self.log("loss/total", total_loss)
         if self.global_step % self.save_interval == 0:
@@ -515,7 +519,7 @@ class ModelWrapper(LightningModule):
         # self.print_gpu_memory("Step3")
         # Skip batch if loss is too high after certain step
         SKIP_AFTER_STEP = 1000  
-        LOSS_THRESHOLD = 0.2
+        LOSS_THRESHOLD = 1.0
         pred_all_extrinsic = pred_context_pose['extrinsic']
         if self.global_step > SKIP_AFTER_STEP and total_loss > LOSS_THRESHOLD:
             print(f"Skipping batch with high loss ({total_loss:.6f}) at step {self.global_step} on Rank {self.global_rank}")
@@ -765,7 +769,8 @@ class ModelWrapper(LightningModule):
         self.log("val/consis_delta1", consis_delta1.mean())
 
         diff_map = torch.abs(output.depth - depth_dict['depth'].squeeze(-1))
-        self.log("val/consis_mse", diff_map[distill_infos['conf_mask']].mean())
+        if distill_infos:
+            self.log("val/consis_mse", diff_map[distill_infos['conf_mask']].mean())
 
         # Construct comparison image.
         context_img = inverse_normalize(batch["context"]["image"][0])

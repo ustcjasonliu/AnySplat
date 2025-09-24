@@ -211,7 +211,7 @@ class DatasetDL3DV(Dataset):
             next_batch_index = (self.batch_index + 1) % total_batch_num
             target_indices = torch.arange(start = next_batch_index * self.batch_size, 
                                           end = min((next_batch_index + 1)* self.batch_size , total_frame_size),
-                                          step = 3)
+                                          step = 1)
             overlap = torch.tensor([0.])
             print(f"scene {scene}, context indices: {context_indices}, target indices: {target_indices}, overlap: {overlap}")
             #self.batch_index = next_batch_index
