@@ -199,19 +199,19 @@ class DatasetDL3DV(Dataset):
         intrinsics = torch.tensor(intrinsics, dtype=torch.float32)
         
         try:
-            # context_indices, target_indices, overlap = self.view_sampler.sample(
-            #     scene,
-            #     num_context_views,
-            #     extrinsics,
-            #     intrinsics,
-            # )
-            total_frame_size , _ , _ = extrinsics.shape
-            total_batch_num = total_frame_size // self.batch_size
-            context_indices = torch.arange(self.batch_index * self.batch_size, min((self.batch_index + 1) * self.batch_size, total_frame_size))
-            next_batch_index = (self.batch_index + 1) % total_batch_num
-            target_indices = torch.arange(start = next_batch_index * self.batch_size, 
-                                          end = min((next_batch_index + 1)* self.batch_size , total_frame_size),
-                                          step = 1)
+            context_indices, target_indices, overlap = self.view_sampler.sample(
+                scene,
+                num_context_views,
+                extrinsics,
+                intrinsics,
+            )
+            # total_frame_size , _ , _ = extrinsics.shape
+            # total_batch_num = total_frame_size // self.batch_size
+            # context_indices = torch.arange(self.batch_index * self.batch_size, min((self.batch_index + 1) * self.batch_size, total_frame_size))
+            # next_batch_index = (self.batch_index + 1) % total_batch_num
+            # target_indices = torch.arange(start = next_batch_index * self.batch_size, 
+            #                               end = min((next_batch_index + 1)* self.batch_size , total_frame_size),
+            #                               step = 1)
             overlap = torch.tensor([0.])
             print(f"scene {scene}, context indices: {context_indices}, target indices: {target_indices}, overlap: {overlap}")
             #self.batch_index = next_batch_index

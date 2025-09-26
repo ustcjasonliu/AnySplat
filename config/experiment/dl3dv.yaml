@@ -34,8 +34,8 @@ dataset:
   dl3dv:
     input_image_shape: [224, 448]
     view_sampler:
-      num_context_views: 16
-      num_target_views: 2
+      num_context_views: 24
+      num_target_views: 10
       min_distance_between_context_views: 32
       max_distance_between_context_views: 256
 
@@ -63,7 +63,7 @@ trainer:
   precision: bf16-mixed
 
 checkpointing:
-  load:  /mnt/public/jason/AnySplat/output/exp_dl3dv/2025-09-24_12-24-04/checkpoints/epoch_399-step_400.ckpt
+  load:  null
   every_n_train_steps: 100
   save_weights_only: false
   save_top_k: 5
