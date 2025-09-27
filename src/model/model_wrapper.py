@@ -169,7 +169,6 @@ class ModelWrapper(LightningModule):
         # This is used for testing.
         self.benchmarker = Benchmarker()
         self.save_interval = 100
-        self.lpips = LPIPS(net="vgg")
         
     def on_train_epoch_start(self) -> None:
         # our custom dataset and sampler has to have epoch set by calling set_epoch
@@ -393,15 +392,16 @@ class ModelWrapper(LightningModule):
                 gt_img = (batch["target"]["image"] + 1) / 2
                 delta = rendered_rgb - gt_img
                 loss_prediction_rgb = get_cfg()[ 'loss']['mse']['weight'] * torch.nan_to_num((delta**2).mean(), nan=0.0, posinf=0.0, neginf=0.0)
-                loss_predition_lpips =  torch.nan_to_num(self.lpips.forward(rearrange(rendered_rgb, "b v c h w -> (b v) c h w"), 
-                                                                            rearrange(gt_img, "b v c h w -> (b v) c h w"), 
-                                                                            normalize=True).mean(), 
-                                                        nan=0.0, posinf=0.0, neginf=0.0)
-                total_loss += loss_prediction_rgb + loss_predition_lpips
+                lpips_loss_idx = list(get_cfg()["loss"].keys()).index("lpips")
+                loss_prediction_lpips =  torch.nan_to_num(self.losses[lpips_loss_idx].lpips.forward(rearrange(rendered_rgb, "b v c h w -> (b v) c h w"), 
+                                                                                                    rearrange(gt_img, "b v c h w -> (b v) c h w"), 
+                                                                                                    normalize=True).mean(), 
+                                                                                                    nan=0.0, posinf=0.0, neginf=0.0)
+                total_loss += loss_prediction_rgb + loss_prediction_lpips
                 global_step_save_folder = str(self.train_cfg.output_path / f"steps_{self.global_step}_train_log")
                 self.log("loss/loss_prediction_rgb", loss_prediction_rgb)
                 loss_prediction_pose = self.loss_pose(pred_pose_enc_list, batch)
-                total_loss += loss_prediction_pose["loss_camera"]
+                total_loss += 0.1 * loss_prediction_pose["loss_camera"]
                 if self.global_step % self.save_interval == 0:
                     save_video(gt_img[0], os.path.join(global_step_save_folder, f"nvs_gt_image.mp4"))
                     save_video(rendered_rgb[0], os.path.join(global_step_save_folder, f"nvs_render_image.mp4"))
@@ -409,11 +409,11 @@ class ModelWrapper(LightningModule):
                     save_poses(save_nvs_poses_file, batch["context"]["extrinsics"], batch["target"]["extrinsics"])
                     # print(f"loss_prediction_rgb: {loss_prediction_rgb}")
                     # print("loss_prediction_pose ", loss_prediction_pose["loss_camera"])
-                    # print("loss_predition_lpips ", loss_predition_lpips)
+                    # print("loss_prediction_lpips ", loss_prediction_lpips)
              
         self.log("loss/total", total_loss)
         #if self.global_step % self.save_interval == 0:
-        print(f"global step {self.global_step} total_loss: {total_loss} loss_prediction_pose {loss_prediction_pose['loss_camera']} loss_predition_lpips {loss_predition_lpips}")
+        print(f"global step {self.global_step} total_loss: {total_loss} loss_prediction_rgb {loss_prediction_rgb} loss_prediction_pose {loss_prediction_pose['loss_camera']} loss_prediction_lpips {loss_prediction_lpips}")
         return total_loss
 
     def save_for_visualization(self, num_views, num_origin_views, output, encoder_output):
