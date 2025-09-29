@@ -276,11 +276,11 @@ class ModelWrapper(LightningModule):
                                         conf_valid_mask=encoder_ouput.depth_dict['conf_valid_mask'][:,:origin_num]),
                         infos= encoder_ouput.infos,
                         distill_infos=dict( 
-                                      pred_pose_enc_list=[pred_pose_enc[:,:origin_num, :] for pred_pose_enc in encoder_ouput.distill_infos['pred_pose_enc_list']] ,
-                                      pts_all=encoder_ouput.distill_infos['pts_all'][:,:origin_num], 
-                                      depth_map=encoder_ouput.distill_infos['depth_map'][:,:origin_num],
-                                      conf_mask=encoder_ouput.distill_infos['conf_mask'][:,:origin_num]
-                                    ),
+                                    pred_pose_enc_list=[pred_pose_enc[:,:origin_num, :] for pred_pose_enc in encoder_ouput.distill_infos['pred_pose_enc_list']] ,
+                                    pts_all=encoder_ouput.distill_infos['pts_all'][:,:origin_num], 
+                                    depth_map=encoder_ouput.distill_infos['depth_map'][:,:origin_num],
+                                    conf_mask=encoder_ouput.distill_infos['conf_mask'][:,:origin_num]
+                                    ) if 'pred_pose_enc_list' in encoder_ouput.distill_infos else {},
                         )
         extended_encoder_output = EncoderOutput(
                         gaussians=encoder_ouput.gaussians,
@@ -293,12 +293,14 @@ class ModelWrapper(LightningModule):
                                         conf_valid_mask=encoder_ouput.depth_dict['conf_valid_mask'][:,origin_num:]),
                         infos= encoder_ouput.infos,
                         distill_infos=dict( 
-                                      pred_pose_enc_list=[pred_pose_enc[:,origin_num:, :] for pred_pose_enc in encoder_ouput.distill_infos['pred_pose_enc_list']] ,
-                                      pts_all=encoder_ouput.distill_infos['pts_all'][:,origin_num:], 
-                                      depth_map=encoder_ouput.distill_infos['depth_map'][:,origin_num:],
-                                      conf_mask=encoder_ouput.distill_infos['conf_mask'][:,origin_num:]
-                                    ),
+                                    pred_pose_enc_list=[pred_pose_enc[:,origin_num:, :] for pred_pose_enc in encoder_ouput.distill_infos['pred_pose_enc_list']] ,
+                                    pts_all=encoder_ouput.distill_infos['pts_all'][:,origin_num:], 
+                                    depth_map=encoder_ouput.distill_infos['depth_map'][:,origin_num:],
+                                    conf_mask=encoder_ouput.distill_infos['conf_mask'][:,origin_num:]
+                                    ) if 'pred_pose_enc_list' in encoder_ouput.distill_infos else {},
                         )
+
+
         
         origin_output = DecoderOutput(
                          color=output.color[:,:origin_num,],
@@ -328,20 +330,19 @@ class ModelWrapper(LightningModule):
             rearrange(output.color, "b v c h w -> (b v) c h w"),
         )
         self.log("train/psnr_probabilistic", psnr_probabilistic.mean())
-
-        consis_absrel = abs_relative_difference(
-            rearrange(output.depth, "b v h w -> (b v) h w"),
-            rearrange(depth_dict['depth'].squeeze(-1), "b v h w -> (b v) h w"),
-            rearrange(distill_infos['conf_mask'], "b v h w -> (b v) h w"),
-        )
-        self.log("train/consis_absrel", consis_absrel.mean())
-
-        consis_delta1 = delta1_acc(
-            rearrange(output.depth, "b v h w -> (b v) h w"),
-            rearrange(depth_dict['depth'].squeeze(-1), "b v h w -> (b v) h w"),
-            rearrange(distill_infos['conf_mask'], "b v h w -> (b v) h w"),
-        )
-        self.log("train/consis_delta1", consis_delta1.mean())
+        if self.model.encoder.distill:
+            consis_absrel = abs_relative_difference(
+                rearrange(output.depth, "b v h w -> (b v) h w"),
+                rearrange(depth_dict['depth'].squeeze(-1), "b v h w -> (b v) h w"),
+                rearrange(distill_infos['conf_mask'], "b v h w -> (b v) h w"),
+            )
+            self.log("train/consis_absrel", consis_absrel.mean())
+            consis_delta1 = delta1_acc(
+                rearrange(output.depth, "b v h w -> (b v) h w"),
+                rearrange(depth_dict['depth'].squeeze(-1), "b v h w -> (b v) h w"),
+                rearrange(distill_infos['conf_mask'], "b v h w -> (b v) h w"),
+            )
+            self.log("train/consis_delta1", consis_delta1.mean())
 
     def compute_loss(self, batch, encoder_output, output):
            # Compute and log loss.
@@ -368,7 +369,7 @@ class ModelWrapper(LightningModule):
                 self.log("loss/ctx_depth", loss_depth)
                 total_loss = total_loss + loss_depth
 
-            if distill_infos is not None:
+            if self.model.encoder.distill:
                 # distill ctx pred_pose & depth & normal
                 loss_distill_list = self.loss_distill(distill_infos, pred_pose_enc_list, output, batch)
                 self.log("loss/distill", loss_distill_list['loss_distill'])
@@ -401,7 +402,7 @@ class ModelWrapper(LightningModule):
                 global_step_save_folder = str(self.train_cfg.output_path / f"steps_{self.global_step}_train_log")
                 self.log("loss/loss_prediction_rgb", loss_prediction_rgb)
                 loss_prediction_pose = self.loss_pose(pred_pose_enc_list, batch)
-                total_loss += 0.1 * loss_prediction_pose["loss_camera"]
+                total_loss += 0.5 * loss_prediction_pose["loss_camera"]
                 if self.global_step % self.save_interval == 0:
                     save_video(gt_img[0], os.path.join(global_step_save_folder, f"nvs_gt_image.mp4"))
                     save_video(rendered_rgb[0], os.path.join(global_step_save_folder, f"nvs_render_image.mp4"))

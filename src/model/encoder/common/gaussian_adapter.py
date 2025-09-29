@@ -132,6 +132,10 @@ class UnifiedGaussianAdapter(GaussianAdapter):
         
         sh = rearrange(sh, "... (xyz d_sh) -> ... xyz d_sh", xyz=3)
         sh = sh.broadcast_to((*opacities.shape, 3, self.d_sh)) * self.sh_mask
+        sh[..., 1:] = 0.0  # Boost the DC component
+        # print("sh shape :", sh.shape)
+        # print("sh mask:", self.sh_mask , "  sh   ", sh)
+
         # print(scales.max())
         covariances = build_covariance(scales, rotations)
         

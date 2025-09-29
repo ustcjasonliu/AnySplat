@@ -111,7 +111,7 @@ class LossDepthConsis(Loss[LossDepthConsisCfg, LossDepthConsisCfgWrapper]):
     ) -> Float[Tensor, ""]:
         
         # Before the specified step, don't apply the loss.
-        if global_step < self.cfg.apply_after_step:
+        if global_step < self.cfg.apply_after_step or not 'depth' in  depth_dict or not 'conf_mask' in depth_dict['distill_infos']:
             return torch.tensor(0.0, dtype=torch.float32, device=prediction.depth.device)
         
         # Scale the depth between the near and far planes.

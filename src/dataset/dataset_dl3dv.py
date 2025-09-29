@@ -180,6 +180,39 @@ class DatasetDL3DV(Dataset):
     def shuffle(self, lst: list) -> list:
         indices = torch.randperm(len(lst))
         return [lst[x] for x in indices]
+
+    def flexible_sample_indices(self, m, t, c, fixed_points=None):
+        """
+        灵活版本的采样函数
+        
+        Args:
+            m: 最大索引值
+            t: target_indices数量
+            c: context_indices数量
+            fixed_points: 固定的context点，默认为[0, (m+1)//2, m]
+        """
+        if fixed_points is None:
+            fixed_points = [0, (m + 1) // 2, m]
+        
+        fixed_indices = torch.tensor(fixed_points)
+        fixed_count = len(fixed_indices)
+        
+        assert c >= fixed_count, f"context_indices数量必须至少为{fixed_count}"
+        assert t + c <= m + 1, "采样总数不能超过可用索引数量"
+        
+        # 剩余可用索引
+        all_indices = torch.arange(m + 1)
+        remaining_indices = all_indices[~torch.isin(all_indices, fixed_indices)]
+        shuffled_indices = remaining_indices[torch.randperm(len(remaining_indices))]
+        
+        # 采样
+        target_indices = shuffled_indices[:t]
+        additional_context_count = c - fixed_count
+        additional_context_indices = shuffled_indices[t:t + additional_context_count]
+        
+        context_indices = torch.cat([fixed_indices, additional_context_indices])
+        
+        return target_indices, context_indices
         
     def getitem(self, index: int, num_context_views: int, patchsize: tuple) -> dict:
         
@@ -215,9 +248,7 @@ class DatasetDL3DV(Dataset):
             #                               end = min((next_batch_index + 1)* self.batch_size , total_frame_size),
             #                               step = 1)
             total_frame_size , _ , _ = extrinsics.shape
-            combined_sample = torch.randperm(total_frame_size)
-            context_indices = combined_sample[:self.batch_size]
-            target_indices = combined_sample[self.batch_size:2 * self.batch_size]
+            target_indices, context_indices = self.flexible_sample_indices(total_frame_size - 1, self.batch_size, self.batch_size)
             overlap = torch.tensor([0.])
             print(f"scene {scene}, context indices: {context_indices}, target indices: {target_indices}, overlap: {overlap}")
             #self.batch_index = next_batch_index
