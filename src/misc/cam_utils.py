@@ -216,3 +216,92 @@ def rotation_6d_to_matrix(d6):
     b2 = F.normalize(b2, dim=-1)
     b3 = torch.cross(b1, b2, dim=-1)
     return torch.stack((b1, b2, b3), dim=-2)
+
+
+
+def align_and_transform(context_gt, context_pred, target_gt):
+    """
+    通过context_gt和context_pred计算尺度变换，并将其应用到target_gt上
+    
+    Args:
+        context_gt: (batch, context_gt_num, 4, 4)
+        context_pred: (batch, context_pred_num, 4, 4) 
+        target_gt: (batch, target_gt_num, 4, 4)
+    
+    Returns:
+        target_pred: (batch, target_gt_num, 4, 4)
+    """
+    batch_size = context_gt.shape[0]
+    
+    # 提取平移分量 (batch, num_poses, 3)
+    trans_gt = context_gt[..., :3, 3]
+    trans_pred = context_pred[..., :3, 3]
+    
+    # 计算尺度因子 - 使用所有context点的距离比例
+    gt_distances = torch.norm(trans_gt[:, 1:] - trans_gt[:, :-1], dim=-1)  # (batch, context_gt_num-1)
+    pred_distances = torch.norm(trans_pred[:, 1:] - trans_pred[:, :-1], dim=-1)  # (batch, context_pred_num-1)
+    
+    # 平均尺度因子
+    scale_factors = pred_distances.mean(dim=1) / gt_distances.mean(dim=1)  # (batch,)
+    scale_factors = scale_factors.unsqueeze(-1).unsqueeze(-1)  # (batch, 1, 1)
+    
+    # 计算旋转 - 使用SVD分解
+    # 将第一个点对齐到原点
+    gt_centered = trans_gt - trans_gt[:, :1, :]  # (batch, context_gt_num, 3)
+    pred_centered = trans_pred - trans_pred[:, :1, :]  # (batch, context_pred_num, 3)
+    
+    # 由于点数可能不同，使用最小点数
+    min_points = min(context_gt.shape[1], context_pred.shape[1])
+    gt_centered = gt_centered[:, :min_points, :]
+    pred_centered = pred_centered[:, :min_points, :]
+    
+    # 计算旋转矩阵
+    H = torch.bmm(gt_centered.transpose(1, 2), pred_centered)  # (batch, 3, 3)
+    
+    rotations = []
+    for i in range(batch_size):
+        # 对每个batch单独进行SVD
+        U, S, V = torch.svd(H[i])
+        
+        # 确保右手坐标系
+        det = torch.det(torch.mm(U, V.t()))
+        if det < 0:
+            V[:, -1] = -V[:, -1]  # 翻转最后一列
+        
+        rotation = torch.mm(V, U.t())
+        rotations.append(rotation)
+    
+    rotation = torch.stack(rotations, dim=0)  # (batch, 3, 3)
+    
+    # 计算平移 - 修复形状问题
+    # trans_gt[:, 0:1, :] 形状: (batch, 1, 3)
+    # scale_factors 形状: (batch, 1, 1)
+    # 先进行尺度变换，然后旋转
+    gt_first_point_scaled = trans_gt[:, 0:1, :] * scale_factors  # (batch, 1, 3)
+    
+    # 旋转变换: (batch, 1, 3) @ (batch, 3, 3) = (batch, 1, 3)
+    gt_first_point_transformed = torch.bmm(gt_first_point_scaled, rotation.transpose(1, 2))
+    
+    # 计算平移偏移
+    translation = trans_pred[:, 0:1, :] - gt_first_point_transformed  # (batch, 1, 3)
+    
+    # 应用到target_gt
+    target_trans = target_gt[..., :3, 3]  # (batch, target_gt_num, 3)
+    target_rot = target_gt[..., :3, :3]  # (batch, target_gt_num, 3, 3)
+    
+    # 变换平移分量
+    target_trans_scaled = target_trans * scale_factors  # (batch, target_gt_num, 3)
+    target_trans_rotated = torch.bmm(target_trans_scaled, rotation.transpose(1, 2))  # (batch, target_gt_num, 3)
+    target_trans_transformed = target_trans_rotated + translation  # (batch, target_gt_num, 3)
+    
+    # 变换旋转分量
+    # rotation: (batch, 3, 3) -> (batch, 1, 3, 3) -> (batch, target_gt_num, 3, 3)
+    rotation_expanded = rotation.unsqueeze(1).expand(-1, target_gt.shape[1], -1, -1)
+    target_rot_transformed = torch.matmul(rotation_expanded, target_rot)  # (batch, target_gt_num, 3, 3)
+    
+    # 构建变换后的位姿矩阵
+    target_pred = torch.eye(4, device=context_gt.device).unsqueeze(0).unsqueeze(0).repeat(batch_size, target_gt.shape[1], 1, 1)
+    target_pred[..., :3, :3] = target_rot_transformed
+    target_pred[..., :3, 3] = target_trans_transformed
+    
+    return target_pred

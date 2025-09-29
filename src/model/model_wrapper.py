@@ -44,7 +44,7 @@ from ..loss import Loss
 from ..loss.loss_point import Regr3D
 from ..loss.loss_ssim import ssim
 from ..misc.benchmarker import Benchmarker
-from ..misc.cam_utils import update_pose, get_pnp_pose, rotation_6d_to_matrix
+from ..misc.cam_utils import update_pose, get_pnp_pose, rotation_6d_to_matrix, align_and_transform
 from ..misc.image_io import prep_image, save_image, save_video, save_interpolated_video
 from ..misc.LocalLogger import LOG_PATH, LocalLogger
 from ..misc.nn_module_tools import convert_to_buffer
@@ -253,8 +253,6 @@ class ModelWrapper(LightningModule):
             save_video(origin_image[0], os.path.join(global_step_save_folder, f"origin_rgb.mp4"))
             save_video(render_result.color[0], os.path.join(global_step_save_folder, f"rendered_rgb.mp4"))
             save_video(extended_batch["context"]["image"][0], os.path.join(global_step_save_folder, f"diffix_rgb.mp4"))
-            project_poses_file = os.path.join(global_step_save_folder, "project_poses_file.pkl")
-            save_poses(project_poses_file, batch["context"]["extrinsics"], extra_extrinsics)
         
         return full_batch, extended_batch
 
@@ -385,7 +383,11 @@ class ModelWrapper(LightningModule):
             
             if gaussians is not None:
                 b, v, c, h, w = batch["context"]["image"].shape
-                render_result = self.model.get_gaussian_splat_results(batch["target"]["extrinsics"], 
+                with torch.no_grad():
+                    target_extrinsics = align_and_transform(batch["context"]["extrinsics"], 
+                                                            encoder_output.pred_context_pose['extrinsic'], 
+                                                            batch["target"]["extrinsics"])
+                render_result = self.model.get_gaussian_splat_results(target_extrinsics,
                                                                       batch["target"]["intrinsics"], 
                                                                       h, w, v)
                 # valid_mask = batch['target']['valid_mask']
@@ -401,20 +403,20 @@ class ModelWrapper(LightningModule):
                 total_loss += loss_prediction_rgb + loss_prediction_lpips
                 global_step_save_folder = str(self.train_cfg.output_path / f"steps_{self.global_step}_train_log")
                 self.log("loss/loss_prediction_rgb", loss_prediction_rgb)
-                loss_prediction_pose = self.loss_pose(pred_pose_enc_list, batch)
-                total_loss += 0.5 * loss_prediction_pose["loss_camera"]
+                constext_pose_loss = self.loss_pose(pred_pose_enc_list, batch, start_index=0, end_index=v)
+                total_loss += 0.5 * constext_pose_loss["loss_camera"]
                 if self.global_step % self.save_interval == 0:
                     save_video(gt_img[0], os.path.join(global_step_save_folder, f"nvs_gt_image.mp4"))
                     save_video(rendered_rgb[0], os.path.join(global_step_save_folder, f"nvs_render_image.mp4"))
-                    save_nvs_poses_file = os.path.join(global_step_save_folder, "nvs_poses.pkl")
-                    save_poses(save_nvs_poses_file, batch["context"]["extrinsics"], batch["target"]["extrinsics"])
-                    # print(f"loss_prediction_rgb: {loss_prediction_rgb}")
-                    # print("loss_prediction_pose ", loss_prediction_pose["loss_camera"])
-                    # print("loss_prediction_lpips ", loss_prediction_lpips)
+                    ground_truth_pose_file = os.path.join(global_step_save_folder, "ground_truth_poses.pkl")
+                    save_poses(ground_truth_pose_file, batch["context"]["extrinsics"], batch["target"]["extrinsics"])
+                    predict_pose_file = os.path.join(global_step_save_folder, "predict_poses.pkl")
+                    save_poses(predict_pose_file, encoder_output.pred_context_pose['extrinsic'], target_extrinsics)
+    
              
         self.log("loss/total", total_loss)
         #if self.global_step % self.save_interval == 0:
-        print(f"global step {self.global_step} total_loss: {total_loss} loss_prediction_rgb {loss_prediction_rgb} loss_prediction_pose {loss_prediction_pose['loss_camera']} loss_prediction_lpips {loss_prediction_lpips}")
+        print(f"global step {self.global_step} total_loss: {total_loss} loss_prediction_rgb {loss_prediction_rgb} constext_pose_loss {constext_pose_loss} loss_prediction_lpips {loss_prediction_lpips}")
         return total_loss
 
     def save_for_visualization(self, num_views, num_origin_views, output, encoder_output):

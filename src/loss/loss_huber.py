@@ -107,21 +107,20 @@ class HuberLoss(nn.Module):
         
         return loss_T, loss_R, loss_fl
 
-    def forward(self, pred_pose_enc_list, batch):
-        context_extrinsics = batch["context"]["extrinsics"]
-        context_intrinsics = batch["context"]["intrinsics"]
+    def forward(self, pred_pose_enc_list, batch, start_index=0, end_index=-1):
+        context_extrinsics = batch["context"]["extrinsics"][:,start_index:end_index]
+        context_intrinsics = batch["context"]["intrinsics"][:,start_index:end_index]
         image_size_hw = batch["context"]["image"].shape[-2:]
         
         # transform extrinsics and intrinsics to pose_enc
         GT_pose_enc = extri_intri_to_pose_encoding(context_extrinsics, context_intrinsics, image_size_hw)
         num_predictions = len(pred_pose_enc_list)
         loss_T = loss_R = loss_fl = 0
+        current_pred_pose_enc_list = [current_pred_pose_enc[:,start_index:end_index] if end_index != -1 else current_pred_pose_enc[:,start_index:] for current_pred_pose_enc in pred_pose_enc_list]
         
         for i in range(num_predictions):
             i_weight = self.gamma ** (num_predictions - i - 1)
-
-            cur_pred_pose_enc = pred_pose_enc_list[i]
-
+            cur_pred_pose_enc = current_pred_pose_enc_list[i]
             loss_T_i, loss_R_i, loss_fl_i = self.camera_loss_single(cur_pred_pose_enc.clone(), GT_pose_enc.clone(), loss_type="huber")
             loss_T += i_weight * loss_T_i
             loss_R += i_weight * loss_R_i

@@ -15,5 +15,5 @@ max_fov: 100.0
 avg_pose: false
 
 rescale_to_1cube: true
-make_baseline_1: false
+make_baseline_1: true
 intr_augment: true
