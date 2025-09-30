@@ -69,6 +69,8 @@ from .encoder import Encoder
 from .encoder.visualization.encoder_visualizer import EncoderVisualizer
 from .ply_export import export_ply, save_poses
 from src.diffix3d.diffix_util import DiffixUtil
+from pytorch_msssim import ssim, ms_ssim, SSIM, MS_SSIM
+
 import copy
 
 @dataclass
@@ -169,6 +171,8 @@ class ModelWrapper(LightningModule):
         # This is used for testing.
         self.benchmarker = Benchmarker()
         self.save_interval = 100
+        self.ssim_loss_module = MS_SSIM(data_range=1.0, size_average=True)
+
         
     def on_train_epoch_start(self) -> None:
         # our custom dataset and sampler has to have epoch set by calling set_epoch
@@ -357,6 +361,11 @@ class ModelWrapper(LightningModule):
                 if self.global_step % self.save_interval == 0:
                     print(f"loss/{loss_fn.name}:{loss} ")
                 total_loss = total_loss + loss
+            context_gt_img = (batch["target"]["image"] + 1) / 2
+            context_ssim_loss = 1.0 - self.ssim_loss_module(rearrange(output.color, "b v c h w -> (b v) c h w"), 
+                                                            rearrange(context_gt_img, "b v c h w -> (b v) c h w"))
+            print("context_ssim", context_ssim_loss)
+            total_loss += context_ssim_loss
 
             if depth_dict is not None and "depth" in get_cfg()["loss"].keys() and self.train_cfg.cxt_depth_weight > 0:
                 depth_loss_idx = list(get_cfg()["loss"].keys()).index("depth")
@@ -392,21 +401,26 @@ class ModelWrapper(LightningModule):
                                                                       h, w, v)
                 # valid_mask = batch['target']['valid_mask']
                 rendered_rgb = render_result.color
-                gt_img = (batch["target"]["image"] + 1) / 2
-                delta = rendered_rgb - gt_img
+                target_gt_img = (batch["target"]["image"] + 1) / 2
+                delta = rendered_rgb - target_gt_img
                 loss_prediction_rgb = get_cfg()[ 'loss']['mse']['weight'] * torch.nan_to_num((delta**2).mean(), nan=0.0, posinf=0.0, neginf=0.0)
                 lpips_loss_idx = list(get_cfg()["loss"].keys()).index("lpips")
                 loss_prediction_lpips =  torch.nan_to_num(self.losses[lpips_loss_idx].lpips.forward(rearrange(rendered_rgb, "b v c h w -> (b v) c h w"), 
-                                                                                                    rearrange(gt_img, "b v c h w -> (b v) c h w"), 
+                                                                                                    rearrange(target_gt_img, "b v c h w -> (b v) c h w"), 
                                                                                                     normalize=True).mean(), 
                                                                                                     nan=0.0, posinf=0.0, neginf=0.0)
-                total_loss += loss_prediction_rgb + loss_prediction_lpips
+
+                target_ssim_loss = 1 -  self.ssim_loss_module(rearrange(rendered_rgb, "b v c h w -> (b v) c h w"), 
+                                                              rearrange(target_gt_img, "b v c h w -> (b v) c h w"))
+                print("target_ssim_loss", target_ssim_loss)                                                                                  
+                total_loss += loss_prediction_rgb + loss_prediction_lpips + target_ssim_loss
                 global_step_save_folder = str(self.train_cfg.output_path / f"steps_{self.global_step}_train_log")
                 self.log("loss/loss_prediction_rgb", loss_prediction_rgb)
                 constext_pose_loss = self.loss_pose(pred_pose_enc_list, batch, start_index=0, end_index=v)
-                total_loss += 0.5 * constext_pose_loss["loss_camera"]
+                total_loss += 0.1 * constext_pose_loss["loss_camera"]
+                
                 if self.global_step % self.save_interval == 0:
-                    save_video(gt_img[0], os.path.join(global_step_save_folder, f"nvs_gt_image.mp4"))
+                    save_video(target_gt_img[0], os.path.join(global_step_save_folder, f"nvs_gt_image.mp4"))
                     save_video(rendered_rgb[0], os.path.join(global_step_save_folder, f"nvs_render_image.mp4"))
                     ground_truth_pose_file = os.path.join(global_step_save_folder, "ground_truth_poses.pkl")
                     save_poses(ground_truth_pose_file, batch["context"]["extrinsics"], batch["target"]["extrinsics"])
@@ -415,8 +429,10 @@ class ModelWrapper(LightningModule):
     
              
         self.log("loss/total", total_loss)
-        #if self.global_step % self.save_interval == 0:
-        print(f"global step {self.global_step} total_loss: {total_loss} loss_prediction_rgb {loss_prediction_rgb} constext_pose_loss {constext_pose_loss} loss_prediction_lpips {loss_prediction_lpips}")
+        # if self.global_step % self.save_interval == 0:                                                                          
+        print(f"global step {self.global_step} total_loss: {total_loss} loss_prediction_rgb {loss_prediction_rgb} \
+                constext_pose_loss {constext_pose_loss} target_ssim_loss {target_ssim_loss} \
+                loss_prediction_lpips {loss_prediction_lpips}")
         return total_loss
 
     def save_for_visualization(self, num_views, num_origin_views, output, encoder_output):
@@ -500,7 +516,7 @@ class ModelWrapper(LightningModule):
         batch: BatchedExample = self.data_shim(batch)
         b, v, c, h, w = batch["context"]["image"].shape
        
-        if v >= 4 and self.global_step > 10000:
+        if v >= 4 and self.global_step > 1000:
             full_batch, extended_batch = self.update_batch_by_diffusion(batch)
         else:
             full_batch = batch
