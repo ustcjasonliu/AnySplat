@@ -29,7 +29,6 @@ def save_poses(save_path: str,
     os.makedirs(os.path.dirname(save_path) or '.', exist_ok=True)
     with open(save_path, 'wb') as f:
         pickle.dump({'context': context_np, 'target': target_np, 'm': m, 'n': n}, f)
-    print(f'已保存到 {save_path}  (m={m}, n={n})')
 
 
 def construct_list_of_attributes(num_rest: int) -> list[str]:

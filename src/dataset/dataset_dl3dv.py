@@ -96,6 +96,7 @@ class DatasetDL3DV(Dataset):
         self.batch_size = 24
         self.batch_index = 0
         self.num_batches = len(self.scene_ids) // self.batch_size + 1
+        self.global_step = 0
 
     def convert_intrinsics(self, meta_data):
         store_h, store_w = meta_data["h"], meta_data["w"]
@@ -247,10 +248,14 @@ class DatasetDL3DV(Dataset):
             # target_indices = torch.arange(start = next_batch_index * self.batch_size, 
             #                               end = min((next_batch_index + 1)* self.batch_size , total_frame_size),
             #                               step = 1)
+            #if self.global_step > 1000:
+            self.batch_size = 12
             total_frame_size , _ , _ = extrinsics.shape
             target_indices, context_indices = self.flexible_sample_indices(total_frame_size - 1, self.batch_size, self.batch_size)
             overlap = torch.tensor([0.])
-            print(f"scene {scene}, context indices: {context_indices}, target indices: {target_indices}, overlap: {overlap}")
+            
+            print(f"global_step {self.global_step} scene {scene}, context indices: {context_indices}, target indices: {target_indices}, overlap: {overlap}")
+            self.global_step += 1
             #self.batch_index = next_batch_index
         except ValueError:
             # Skip because the example doesn't have enough frames.

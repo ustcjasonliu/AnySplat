@@ -170,8 +170,10 @@ class ModelWrapper(LightningModule):
 
         # This is used for testing.
         self.benchmarker = Benchmarker()
-        self.save_interval = 100
+        self.detailed_save_interval = 100
+        self.log_save_interval = 10
         self.ssim_loss_module = MS_SSIM(data_range=1.0, size_average=True)
+        self.is_update_by_diffusion = False
 
         
     def on_train_epoch_start(self) -> None:
@@ -249,7 +251,7 @@ class ModelWrapper(LightningModule):
         full_batch["context"]["extrinsics"] = torch.cat([batch["context"]["extrinsics"], extra_extrinsics], dim=1)
         full_batch["context"]["intrinsics"] = torch.cat([batch["context"]["intrinsics"], extra_intrinsics], dim=1)
 
-        if self.global_step % self.save_interval == 0:
+        if self.global_step % self.detailed_save_interval == 0:
             global_step_save_folder = str(self.train_cfg.output_path / f"steps_{self.global_step}_train_log")
             if not os.path.exists(global_step_save_folder):
                 os.makedirs(global_step_save_folder)
@@ -346,32 +348,33 @@ class ModelWrapper(LightningModule):
             )
             self.log("train/consis_delta1", consis_delta1.mean())
 
-    def compute_loss(self, batch, encoder_output, output):
+    def compute_loss(self, batch, extended_batch, encoder_output, output):
            # Compute and log loss.
         total_loss = 0
         gaussians, pred_pose_enc_list, depth_dict = encoder_output.gaussians, encoder_output.pred_pose_enc_list, encoder_output.depth_dict
         distill_infos = encoder_output.distill_infos
         depth_dict['distill_infos'] = distill_infos
-        if self.global_step % self.save_interval == 0:
-            print("=============gloabal step ", self.global_step, " loss=============")
+        if self.global_step % self.log_save_interval == 0:
+            print("=============global step ", self.global_step, " loss=============")
+        b, v, c, h, w = batch["context"]["image"].shape
         with torch.amp.autocast('cuda', enabled=False):
             for loss_fn in self.losses:
                 loss = loss_fn.forward(output, batch, gaussians, depth_dict, self.global_step)
                 self.log(f"loss/{loss_fn.name}", loss)
-                if self.global_step % self.save_interval == 0:
+                if self.global_step % self.log_save_interval == 0:
                     print(f"loss/{loss_fn.name}:{loss} ")
                 total_loss = total_loss + loss
             context_gt_img = (batch["target"]["image"] + 1) / 2
-            context_ssim_loss = 1.0 - self.ssim_loss_module(rearrange(output.color, "b v c h w -> (b v) c h w"), 
+            loss_context_ssim = 1.0 - self.ssim_loss_module(rearrange(output.color, "b v c h w -> (b v) c h w"), 
                                                             rearrange(context_gt_img, "b v c h w -> (b v) c h w"))
-            print("context_ssim", context_ssim_loss)
-            total_loss += context_ssim_loss
+           
+            total_loss += loss_context_ssim
 
             if depth_dict is not None and "depth" in get_cfg()["loss"].keys() and self.train_cfg.cxt_depth_weight > 0:
                 depth_loss_idx = list(get_cfg()["loss"].keys()).index("depth")
                 depth_loss_fn = self.losses[depth_loss_idx].ctx_depth_loss
                 loss_depth = depth_loss_fn(depth_dict["depth_map"], depth_dict["depth_conf"], batch, cxt_depth_weight=self.train_cfg.cxt_depth_weight)
-                if self.self.global_step % self.save_interval  == 0:
+                if self.global_step % self.log_save_interval == 0:
                     print("loss/ctx_depth", loss_depth)
                 self.log("loss/ctx_depth", loss_depth)
                 total_loss = total_loss + loss_depth
@@ -383,15 +386,15 @@ class ModelWrapper(LightningModule):
                 self.log("loss/distill_pose", loss_distill_list['loss_pose'])
                 self.log("loss/distill_depth", loss_distill_list['loss_depth'])
                 self.log("loss/distill_normal", loss_distill_list['loss_normal'])
-                if self.global_step % self.save_interval == 0:
+                if self.global_step % self.log_save_interval == 0:
                     print("loss/distill ", loss_distill_list['loss_distill'])
                     print("loss/distill_pose ", loss_distill_list['loss_pose'])
                     print("loss/distill_depth ", loss_distill_list['loss_depth'])
                     print("loss/distill_normal ", loss_distill_list['loss_normal'])
                 total_loss = total_loss + loss_distill_list['loss_distill']
-            
+            loss_context_pose = self.loss_pose(pred_pose_enc_list, batch, start_index=0, end_index=v)
+            total_loss += 0.1 * loss_context_pose["loss_camera"]
             if gaussians is not None:
-                b, v, c, h, w = batch["context"]["image"].shape
                 with torch.no_grad():
                     target_extrinsics = align_and_transform(batch["context"]["extrinsics"], 
                                                             encoder_output.pred_context_pose['extrinsic'], 
@@ -399,7 +402,7 @@ class ModelWrapper(LightningModule):
                 render_result = self.model.get_gaussian_splat_results(target_extrinsics,
                                                                       batch["target"]["intrinsics"], 
                                                                       h, w, v)
-                # valid_mask = batch['target']['valid_mask']
+            
                 rendered_rgb = render_result.color
                 target_gt_img = (batch["target"]["image"] + 1) / 2
                 delta = rendered_rgb - target_gt_img
@@ -410,29 +413,43 @@ class ModelWrapper(LightningModule):
                                                                                                     normalize=True).mean(), 
                                                                                                     nan=0.0, posinf=0.0, neginf=0.0)
 
-                target_ssim_loss = 1 -  self.ssim_loss_module(rearrange(rendered_rgb, "b v c h w -> (b v) c h w"), 
-                                                              rearrange(target_gt_img, "b v c h w -> (b v) c h w"))
-                print("target_ssim_loss", target_ssim_loss)                                                                                  
-                total_loss += loss_prediction_rgb + loss_prediction_lpips + target_ssim_loss
+                loss_target_ssim = 1 -  self.ssim_loss_module(rearrange(rendered_rgb, "b v c h w -> (b v) c h w"), 
+                                                              rearrange(target_gt_img, "b v c h w -> (b v) c h w"))                                                                            
+                total_loss += loss_prediction_rgb + loss_prediction_lpips + loss_target_ssim
                 global_step_save_folder = str(self.train_cfg.output_path / f"steps_{self.global_step}_train_log")
                 self.log("loss/loss_prediction_rgb", loss_prediction_rgb)
-                constext_pose_loss = self.loss_pose(pred_pose_enc_list, batch, start_index=0, end_index=v)
-                total_loss += 0.1 * constext_pose_loss["loss_camera"]
-                
-                if self.global_step % self.save_interval == 0:
+                if self.global_step % self.detailed_save_interval == 0:
                     save_video(target_gt_img[0], os.path.join(global_step_save_folder, f"nvs_gt_image.mp4"))
                     save_video(rendered_rgb[0], os.path.join(global_step_save_folder, f"nvs_render_image.mp4"))
                     ground_truth_pose_file = os.path.join(global_step_save_folder, "ground_truth_poses.pkl")
                     save_poses(ground_truth_pose_file, batch["context"]["extrinsics"], batch["target"]["extrinsics"])
                     predict_pose_file = os.path.join(global_step_save_folder, "predict_poses.pkl")
                     save_poses(predict_pose_file, encoder_output.pred_context_pose['extrinsic'], target_extrinsics)
-    
-             
-        self.log("loss/total", total_loss)
-        # if self.global_step % self.save_interval == 0:                                                                          
-        print(f"global step {self.global_step} total_loss: {total_loss} loss_prediction_rgb {loss_prediction_rgb} \
-                constext_pose_loss {constext_pose_loss} target_ssim_loss {target_ssim_loss} \
-                loss_prediction_lpips {loss_prediction_lpips}")
+            if extended_batch is not None:
+                diffusion_image = (extended_batch["context"]["image"] + 1) / 2
+                target_gt_img = (batch["target"]["image"] + 1) / 2
+                lpips_loss_idx = list(get_cfg()["loss"].keys()).index("lpips")
+                delta = diffusion_image - target_gt_img
+                loss_diffusion_rgb = get_cfg()[ 'loss']['mse']['weight'] * torch.nan_to_num((delta**2).mean(), nan=0.0, posinf=0.0, neginf=0.0)
+                loss_diffusion_lpips =  self.losses[lpips_loss_idx].lpips.forward(rearrange(target_gt_img, "b v c h w -> (b v) c h w"), 
+                                                                                  rearrange(diffusion_image, "b v c h w -> (b v) c h w"),         
+                                                                                  normalize=True).mean()
+                loss_diffusion_ssim = 1.0 - self.ssim_loss_module(rearrange(target_gt_img, "b v c h w -> (b v) c h w"),
+                                                                  rearrange(diffusion_image, "b v c h w -> (b v) c h w"))
+                total_loss += loss_diffusion_rgb + loss_diffusion_lpips + loss_diffusion_ssim
+
+        if self.global_step % self.log_save_interval == 0:                                                    
+            print(f"loss/total: {total_loss} ")
+            print(f"loss/context_ssim: {loss_context_ssim}", )
+            print(f"loss/prediction_rgb: {loss_prediction_rgb}")
+            print(f"loss/context_pose: {loss_context_pose}")
+            print(f"loss/target_ssim: {loss_target_ssim}")
+            print(f"loss/prediction_lpips: {loss_prediction_lpips}")
+            if extended_batch is not None:
+                print(f"loss/diffusion_rgb: {loss_diffusion_rgb}")
+                print(f"loss/diffusion_lpips: {loss_diffusion_lpips}")
+                print(f"loss/diffusion_ssim: {loss_diffusion_ssim}")
+
         return total_loss
 
     def save_for_visualization(self, num_views, num_origin_views, output, encoder_output):
@@ -518,9 +535,11 @@ class ModelWrapper(LightningModule):
        
         if v >= 4 and self.global_step > 1000:
             full_batch, extended_batch = self.update_batch_by_diffusion(batch)
+            self.is_update_by_diffusion = True
         else:
             full_batch = batch
             extended_batch = None
+            self.is_update_by_diffusion = False
         context_image = (full_batch["context"]["image"] + 1) / 2
         # Run the model.
         visualization_dump = None
@@ -535,15 +554,15 @@ class ModelWrapper(LightningModule):
         using_index = torch.arange(v, device=encoder_output.gaussians.means.device)
         batch["using_index"] = using_index
 
-        total_loss = self.compute_loss(batch, origin_encoder_output, origin_output)
-        if self.global_step % self.save_interval == 0:
+        total_loss = self.compute_loss(batch, extended_batch, origin_encoder_output, origin_output)
+        if self.global_step % self.detailed_save_interval == 0:
             self.compute_metrics(batch, origin_encoder_output, origin_output)
             self.save_for_visualization(full_batch["context"]["image"].shape[1], batch["context"]["image"].shape[1], origin_output, origin_encoder_output)
 
         # self.print_gpu_memory("Step3")
         # Skip batch if loss is too high after certain step
-        SKIP_AFTER_STEP = 1000  
-        LOSS_THRESHOLD = 2.0
+        SKIP_AFTER_STEP = 2000  
+        LOSS_THRESHOLD = 3.0
         pred_all_extrinsic = pred_context_pose['extrinsic']
         if self.global_step > SKIP_AFTER_STEP and total_loss > LOSS_THRESHOLD:
             print(f"Skipping batch with high loss ({total_loss:.6f}) at step {self.global_step} on Rank {self.global_rank}")
