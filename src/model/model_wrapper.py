@@ -174,7 +174,8 @@ class ModelWrapper(LightningModule):
         self.log_save_interval = 10
         self.ssim_loss_module = MS_SSIM(data_range=1.0, size_average=True)
         self.is_update_by_diffusion = False
-
+        self.last_batch_context_extrinsics = None
+        self.last_encoder_output_extrisics = None
         
     def on_train_epoch_start(self) -> None:
         # our custom dataset and sampler has to have epoch set by calling set_epoch
@@ -212,7 +213,7 @@ class ModelWrapper(LightningModule):
     
     def update_batch_by_diffusion(self, batch: BatchedExample) -> BatchedExample:
         """Update the batch by diffusion."""
-        if self.model._gaussians is  None:
+        if self.model._gaussians is None or self.last_batch_context_extrinsics is None or self.last_encoder_output_extrisics is None:
             print("No gaussians in the model, skipping diffusion.")
             return batch, None
         # extra_extrinsics = extrapolate_extrinsics(batch["context"]["extrinsics"], 5, num_exploration_views)
@@ -222,7 +223,11 @@ class ModelWrapper(LightningModule):
         #     batch["context"]["extrinsics"], batch["context"]["intrinsics"], interpolate_num
         # )
 
-        extra_extrinsics, extra_intrinsics = batch["target"]["extrinsics"], batch["target"]["intrinsics"]
+        extra_intrinsics = batch["target"]["intrinsics"]
+        with torch.no_grad():
+            extra_extrinsics = align_and_transform(self.last_batch_context_extrinsics,
+                                                   self.last_encoder_output_extrisics,
+                                                   batch["target"]["extrinsics"])
         b, v, c, h, w = batch["context"]["image"].shape
         extra_b, extra_v, _ , _ = extra_extrinsics.shape
         render_result = self.model.get_gaussian_splat_results(extra_extrinsics, extra_intrinsics, h, w, v)
@@ -561,8 +566,9 @@ class ModelWrapper(LightningModule):
 
         # self.print_gpu_memory("Step3")
         # Skip batch if loss is too high after certain step
+
         SKIP_AFTER_STEP = 2000  
-        LOSS_THRESHOLD = 3.0
+        LOSS_THRESHOLD = 5.0
         pred_all_extrinsic = pred_context_pose['extrinsic']
         if self.global_step > SKIP_AFTER_STEP and total_loss > LOSS_THRESHOLD:
             print(f"Skipping batch with high loss ({total_loss:.6f}) at step {self.global_step} on Rank {self.global_rank}")
@@ -585,12 +591,16 @@ class ModelWrapper(LightningModule):
         # Tell the data loader processes about the current step.
         if self.step_tracker is not None:
             self.step_tracker.set_step(self.global_step)
-        
+
+        self.last_batch_context_extrinsics = copy.deepcopy(batch["context"]["extrinsics"].detach())
+        self.last_encoder_output_extrisics = copy.deepcopy(pred_all_extrinsic.detach())
+
         del batch
         if self.global_step % 10 == 0:
             gc.collect()
             torch.cuda.empty_cache()
 
+    
         return total_loss
     
     def on_after_backward(self):

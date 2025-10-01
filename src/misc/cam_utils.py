@@ -256,15 +256,15 @@ def align_and_transform(context_gt, context_pred, target_gt):
     pred_centered = pred_centered[:, :min_points, :]
     
     # 计算旋转矩阵
-    H = torch.bmm(gt_centered.transpose(1, 2), pred_centered)  # (batch, 3, 3)
+    H = torch.bmm(gt_centered.transpose(1, 2), pred_centered).float()  # (batch, 3, 3)
     
     rotations = []
     for i in range(batch_size):
         # 对每个batch单独进行SVD
         U, S, V = torch.svd(H[i])
-        
+    
         # 确保右手坐标系
-        det = torch.det(torch.mm(U, V.t()))
+        det = torch.det(torch.mm(U.float(), V.t().float()).float())
         if det < 0:
             V[:, -1] = -V[:, -1]  # 翻转最后一列
         
