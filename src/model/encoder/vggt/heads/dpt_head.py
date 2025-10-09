@@ -9,7 +9,7 @@
 
 
 import os
-from typing import List, Dict, Tuple, Union
+from typing import List, Dict, Tuple, Union, Optional
 
 import torch
 import torch.nn as nn
@@ -49,7 +49,7 @@ class DPTHead(nn.Module):
         conf_activation: str = "expp1",
         features: int = 256,
         out_channels: List[int] = [256, 512, 1024, 1024],
-        intermediate_layer_idx: List[int] = [4, 11, 17, 23],
+        intermediate_layer_idx: List[int] = [0, 1, 2, 3],
         pos_embed: bool = True,
         feature_only: bool = False,
         down_ratio: int = 1,
@@ -83,26 +83,34 @@ class DPTHead(nn.Module):
         self.resize_layers = nn.ModuleList(
             [
                 nn.ConvTranspose2d(
-                    in_channels=out_channels[0], out_channels=out_channels[0], kernel_size=4, stride=4, padding=0
+                    in_channels=out_channels[0],
+                    out_channels=out_channels[0],
+                    kernel_size=4,
+                    stride=4,
+                    padding=0,
                 ),
                 nn.ConvTranspose2d(
-                    in_channels=out_channels[1], out_channels=out_channels[1], kernel_size=2, stride=2, padding=0
+                    in_channels=out_channels[1],
+                    out_channels=out_channels[1],
+                    kernel_size=2,
+                    stride=2,
+                    padding=0,
                 ),
                 nn.Identity(),
                 nn.Conv2d(
-                    in_channels=out_channels[3], out_channels=out_channels[3], kernel_size=3, stride=2, padding=1
+                    in_channels=out_channels[3],
+                    out_channels=out_channels[3],
+                    kernel_size=3,
+                    stride=2,
+                    padding=1,
                 ),
             ]
         )
 
-        self.scratch = _make_scratch(
-            out_channels,
-            features,
-            expand=False,
-        )
+        self.scratch = _make_scratch(out_channels, features, expand=False)
 
         # Attach additional modules to scratch.
-        self.scratch.stem_transpose = None
+        self.scratch.stem_transpose = nn.Identity()  # Use Identity instead of None
         self.scratch.refinenet1 = _make_fusion_block(features)
         self.scratch.refinenet2 = _make_fusion_block(features)
         self.scratch.refinenet3 = _make_fusion_block(features)
@@ -110,19 +118,33 @@ class DPTHead(nn.Module):
 
         head_features_1 = features
         head_features_2 = 32
-        
+
         if feature_only:
-            self.scratch.output_conv1 = nn.Conv2d(head_features_1, head_features_1, kernel_size=3, stride=1, padding=1)
+            self.scratch.output_conv1 = nn.Conv2d(
+                head_features_1, head_features_1, kernel_size=3, stride=1, padding=1
+            )
         else:
             self.scratch.output_conv1 = nn.Conv2d(
-                head_features_1, head_features_1 // 2, kernel_size=3, stride=1, padding=1
+                head_features_1,
+                head_features_1 // 2,
+                kernel_size=3,
+                stride=1,
+                padding=1,
             )
             conv2_in_channels = head_features_1 // 2
 
             self.scratch.output_conv2 = nn.Sequential(
-                nn.Conv2d(conv2_in_channels, head_features_2, kernel_size=3, stride=1, padding=1),
+                nn.Conv2d(
+                    conv2_in_channels,
+                    head_features_2,
+                    kernel_size=3,
+                    stride=1,
+                    padding=1,
+                ),
                 nn.ReLU(inplace=True),
-                nn.Conv2d(head_features_2, output_dim, kernel_size=1, stride=1, padding=0),
+                nn.Conv2d(
+                    head_features_2, output_dim, kernel_size=1, stride=1, padding=0
+                ),
             )
 
     def forward(
@@ -159,23 +181,31 @@ class DPTHead(nn.Module):
         # Process frames in batches
         all_preds = []
         all_conf = []
-        
+
         for frames_start_idx in range(0, S, frames_chunk_size):
             frames_end_idx = min(frames_start_idx + frames_chunk_size, S)
 
             # Process batch of frames
             if self.feature_only:
                 chunk_output = self._forward_impl(
-                    aggregated_tokens_list, images, patch_start_idx, frames_start_idx, frames_end_idx
+                    aggregated_tokens_list,
+                    images,
+                    patch_start_idx,
+                    frames_start_idx,
+                    frames_end_idx,
                 )
                 all_preds.append(chunk_output)
             else:
                 chunk_preds, chunk_conf = self._forward_impl(
-                    aggregated_tokens_list, images, patch_start_idx, frames_start_idx, frames_end_idx
+                    aggregated_tokens_list,
+                    images,
+                    patch_start_idx,
+                    frames_start_idx,
+                    frames_end_idx,
                 )
                 all_preds.append(chunk_preds)
                 all_conf.append(chunk_conf)
-        
+
         # Concatenate results along the sequence dimension
         if self.feature_only:
             return torch.cat(all_preds, dim=1)
@@ -187,8 +217,8 @@ class DPTHead(nn.Module):
         aggregated_tokens_list: List[torch.Tensor],
         images: torch.Tensor,
         patch_start_idx: int,
-        frames_start_idx: int = None,
-        frames_end_idx: int = None,
+        frames_start_idx: Optional[int] = None,
+        frames_end_idx: Optional[int] = None,
     ) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
         """
         Implementation of the forward pass through the DPT head.
@@ -206,7 +236,7 @@ class DPTHead(nn.Module):
             Tensor or Tuple[Tensor, Tensor]: Feature maps or (predictions, confidence).
         """
         if frames_start_idx is not None and frames_end_idx is not None:
-            images = images[:, frames_start_idx:frames_end_idx]
+            images = images[:, frames_start_idx:frames_end_idx].contiguous()
 
         B, S, _, H, W = images.shape
 
@@ -214,30 +244,25 @@ class DPTHead(nn.Module):
 
         out = []
         dpt_idx = 0
-        
+
         for layer_idx in self.intermediate_layer_idx:
-            # x = aggregated_tokens_list[layer_idx][:, :, patch_start_idx:]
-            if len(aggregated_tokens_list) > 10:
-                x = aggregated_tokens_list[layer_idx][:, :, patch_start_idx:]
-            else:
-                list_idx = self.intermediate_layer_idx.index(layer_idx)
-                x = aggregated_tokens_list[list_idx][:, :, patch_start_idx:]
+            x = aggregated_tokens_list[layer_idx][:, :, patch_start_idx:]
 
             # Select frames if processing a chunk
             if frames_start_idx is not None and frames_end_idx is not None:
-                x = x[:, frames_start_idx:frames_end_idx].contiguous()
+                x = x[:, frames_start_idx:frames_end_idx]
 
-            x = x.view(B * S, -1, x.shape[-1])
+            x = x.reshape(B * S, -1, x.shape[-1])
+
             x = self.norm(x)
-            
+
             x = x.permute(0, 2, 1).reshape((x.shape[0], x.shape[-1], patch_h, patch_w))
 
             x = self.projects[dpt_idx](x)
             if self.pos_embed:
                 x = self._apply_pos_embed(x, W, H)
-
             x = self.resize_layers[dpt_idx](x)
-            
+
             out.append(x)
             dpt_idx += 1
 
@@ -246,7 +271,10 @@ class DPTHead(nn.Module):
         # Interpolate fused output to match target image resolution.
         out = custom_interpolate(
             out,
-            (int(patch_h * self.patch_size / self.down_ratio), int(patch_w * self.patch_size / self.down_ratio)),
+            (
+                int(patch_h * self.patch_size / self.down_ratio),
+                int(patch_w * self.patch_size / self.down_ratio),
+            ),
             mode="bilinear",
             align_corners=True,
         )
@@ -258,19 +286,25 @@ class DPTHead(nn.Module):
             return out.view(B, S, *out.shape[1:])
 
         out = self.scratch.output_conv2(out)
-        preds, conf = activate_head(out, activation=self.activation, conf_activation=self.conf_activation)
+        preds, conf = activate_head(
+            out, activation=self.activation, conf_activation=self.conf_activation
+        )
 
         preds = preds.view(B, S, *preds.shape[1:])
         conf = conf.view(B, S, *conf.shape[1:])
         return preds, conf
 
-    def _apply_pos_embed(self, x: torch.Tensor, W: int, H: int, ratio: float = 0.1) -> torch.Tensor:
+    def _apply_pos_embed(
+        self, x: torch.Tensor, W: int, H: int, ratio: float = 0.1
+    ) -> torch.Tensor:
         """
         Apply positional embedding to tensor x.
         """
         patch_w = x.shape[-1]
         patch_h = x.shape[-2]
-        pos_embed = create_uv_grid(patch_w, patch_h, aspect_ratio=W / H, dtype=x.dtype, device=x.device)
+        pos_embed = create_uv_grid(
+            patch_w, patch_h, aspect_ratio=W / H, dtype=x.dtype, device=x.device
+        )
         pos_embed = position_grid_to_embed(pos_embed, x.shape[1])
         pos_embed = pos_embed * ratio
         pos_embed = pos_embed.permute(2, 0, 1)[None].expand(x.shape[0], -1, -1, -1)
@@ -314,7 +348,12 @@ class DPTHead(nn.Module):
 ################################################################################
 
 
-def _make_fusion_block(features: int, size: int = None, has_residual: bool = True, groups: int = 1) -> nn.Module:
+def _make_fusion_block(
+    features: int,
+    size: Optional[int] = None,
+    has_residual: bool = True,
+    groups: int = 1,
+) -> nn.Module:
     return FeatureFusionBlock(
         features,
         nn.ReLU(inplace=True),
@@ -328,7 +367,9 @@ def _make_fusion_block(features: int, size: int = None, has_residual: bool = Tru
     )
 
 
-def _make_scratch(in_shape: List[int], out_shape: int, groups: int = 1, expand: bool = False) -> nn.Module:
+def _make_scratch(
+    in_shape: List[int], out_shape: int, groups: int = 1, expand: bool = False
+) -> nn.Module:
     scratch = nn.Module()
     out_shape1 = out_shape
     out_shape2 = out_shape
@@ -344,17 +385,41 @@ def _make_scratch(in_shape: List[int], out_shape: int, groups: int = 1, expand: 
             out_shape4 = out_shape * 8
 
     scratch.layer1_rn = nn.Conv2d(
-        in_shape[0], out_shape1, kernel_size=3, stride=1, padding=1, bias=False, groups=groups
+        in_shape[0],
+        out_shape1,
+        kernel_size=3,
+        stride=1,
+        padding=1,
+        bias=False,
+        groups=groups,
     )
     scratch.layer2_rn = nn.Conv2d(
-        in_shape[1], out_shape2, kernel_size=3, stride=1, padding=1, bias=False, groups=groups
+        in_shape[1],
+        out_shape2,
+        kernel_size=3,
+        stride=1,
+        padding=1,
+        bias=False,
+        groups=groups,
     )
     scratch.layer3_rn = nn.Conv2d(
-        in_shape[2], out_shape3, kernel_size=3, stride=1, padding=1, bias=False, groups=groups
+        in_shape[2],
+        out_shape3,
+        kernel_size=3,
+        stride=1,
+        padding=1,
+        bias=False,
+        groups=groups,
     )
     if len(in_shape) >= 4:
         scratch.layer4_rn = nn.Conv2d(
-            in_shape[3], out_shape4, kernel_size=3, stride=1, padding=1, bias=False, groups=groups
+            in_shape[3],
+            out_shape4,
+            kernel_size=3,
+            stride=1,
+            padding=1,
+            bias=False,
+            groups=groups,
         )
     return scratch
 
@@ -372,14 +437,29 @@ class ResidualConvUnit(nn.Module):
 
         self.bn = bn
         self.groups = groups
-        self.conv1 = nn.Conv2d(features, features, kernel_size=3, stride=1, padding=1, bias=True, groups=self.groups)
-        self.conv2 = nn.Conv2d(features, features, kernel_size=3, stride=1, padding=1, bias=True, groups=self.groups)
+        self.conv1 = nn.Conv2d(
+            features,
+            features,
+            kernel_size=3,
+            stride=1,
+            padding=1,
+            bias=True,
+            groups=self.groups,
+        )
+        self.conv2 = nn.Conv2d(
+            features,
+            features,
+            kernel_size=3,
+            stride=1,
+            padding=1,
+            bias=True,
+            groups=self.groups,
+        )
 
         self.norm1 = None
         self.norm2 = None
 
         self.activation = activation
-        self.skip_add = nn.quantized.FloatFunctional()
 
     def forward(self, x):
         """Forward pass.
@@ -401,7 +481,7 @@ class ResidualConvUnit(nn.Module):
         if self.norm2 is not None:
             out = self.norm2(out)
 
-        return self.skip_add.add(out, x)
+        return out + x
 
 
 class FeatureFusionBlock(nn.Module):
@@ -435,16 +515,25 @@ class FeatureFusionBlock(nn.Module):
             out_features = features // 2
 
         self.out_conv = nn.Conv2d(
-            features, out_features, kernel_size=1, stride=1, padding=0, bias=True, groups=self.groups
+            features,
+            out_features,
+            kernel_size=1,
+            stride=1,
+            padding=0,
+            bias=True,
+            groups=self.groups,
         )
 
         if has_residual:
-            self.resConfUnit1 = ResidualConvUnit(features, activation, bn, groups=self.groups)
+            self.resConfUnit1 = ResidualConvUnit(
+                features, activation, bn, groups=self.groups
+            )
 
         self.has_residual = has_residual
-        self.resConfUnit2 = ResidualConvUnit(features, activation, bn, groups=self.groups)
+        self.resConfUnit2 = ResidualConvUnit(
+            features, activation, bn, groups=self.groups
+        )
 
-        self.skip_add = nn.quantized.FloatFunctional()
         self.size = size
 
     def forward(self, *xs, size=None):
@@ -457,7 +546,7 @@ class FeatureFusionBlock(nn.Module):
 
         if self.has_residual:
             res = self.resConfUnit1(xs[1])
-            output = self.skip_add.add(output, res)
+            output = output + res
 
         output = self.resConfUnit2(output)
 
@@ -468,7 +557,9 @@ class FeatureFusionBlock(nn.Module):
         else:
             modifier = {"size": size}
 
-        output = custom_interpolate(output, **modifier, mode="bilinear", align_corners=self.align_corners)
+        output = custom_interpolate(
+            output, **modifier, mode="bilinear", align_corners=self.align_corners
+        )
         output = self.out_conv(output)
 
         return output
@@ -476,8 +567,8 @@ class FeatureFusionBlock(nn.Module):
 
 def custom_interpolate(
     x: torch.Tensor,
-    size: Tuple[int, int] = None,
-    scale_factor: float = None,
+    size: Optional[Tuple[int, int]] = None,
+    scale_factor: Optional[float] = None,
     mode: str = "bilinear",
     align_corners: bool = True,
 ) -> torch.Tensor:
@@ -486,7 +577,7 @@ def custom_interpolate(
     """
     if size is None:
         size = (int(x.shape[-2] * scale_factor), int(x.shape[-1] * scale_factor))
-    
+
     INT_MAX = 1610612736
 
     input_elements = size[0] * size[1] * x.shape[0] * x.shape[1]
@@ -494,9 +585,14 @@ def custom_interpolate(
     if input_elements > INT_MAX:
         chunks = torch.chunk(x, chunks=(input_elements // INT_MAX) + 1, dim=0)
         interpolated_chunks = [
-            nn.functional.interpolate(chunk, size=size, mode=mode, align_corners=align_corners) for chunk in chunks
+            nn.functional.interpolate(
+                chunk, size=size, mode=mode, align_corners=align_corners
+            )
+            for chunk in chunks
         ]
         x = torch.cat(interpolated_chunks, dim=0)
         return x.contiguous()
     else:
-        return nn.functional.interpolate(x, size=size, mode=mode, align_corners=align_corners)
+        return nn.functional.interpolate(
+            x, size=size, mode=mode, align_corners=align_corners
+        )

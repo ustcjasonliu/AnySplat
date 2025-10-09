@@ -11,9 +11,9 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from src.model.encoder.vggt.layers import Mlp
-from src.model.encoder.vggt.layers.block import Block
-from src.model.encoder.vggt.heads.head_act import activate_pose
+from vggt.layers import Mlp
+from vggt.layers.block import Block
+from vggt.heads.head_act import activate_pose
 
 
 class CameraHead(nn.Module):
@@ -46,20 +46,15 @@ class CameraHead(nn.Module):
         self.quat_act = quat_act
         self.fl_act = fl_act
         self.trunk_depth = trunk_depth
-        
+
         # Build the trunk using a sequence of transformer blocks.
         self.trunk = nn.Sequential(
             *[
-                Block(
-                    dim=dim_in,
-                    num_heads=num_heads,
-                    mlp_ratio=mlp_ratio,
-                    init_values=init_values,
-                )
+                Block(dim=dim_in, num_heads=num_heads, mlp_ratio=mlp_ratio, init_values=init_values)
                 for _ in range(trunk_depth)
             ]
         )
-        
+
         # Normalizations for camera token and trunk output.
         self.token_norm = nn.LayerNorm(dim_in)
         self.trunk_norm = nn.LayerNorm(dim_in)
@@ -73,13 +68,8 @@ class CameraHead(nn.Module):
 
         # Adaptive layer normalization without affine parameters.
         self.adaln_norm = nn.LayerNorm(dim_in, elementwise_affine=False, eps=1e-6)
-        self.pose_branch = Mlp(
-            in_features=dim_in,
-            hidden_features=dim_in // 2,
-            out_features=self.target_dim,
-            drop=0,
-        )
-    
+        self.pose_branch = Mlp(in_features=dim_in, hidden_features=dim_in // 2, out_features=self.target_dim, drop=0)
+
     def forward(self, aggregated_tokens_list: list, num_iterations: int = 4) -> list:
         """
         Forward pass to predict camera parameters.
@@ -97,9 +87,8 @@ class CameraHead(nn.Module):
 
         # Extract the camera tokens
         pose_tokens = tokens[:, :, 0]
-
         pose_tokens = self.token_norm(pose_tokens)
-        
+
         pred_pose_enc_list = self.trunk_fn(pose_tokens, num_iterations)
         return pred_pose_enc_list
 
@@ -129,17 +118,12 @@ class CameraHead(nn.Module):
 
             # Generate modulation parameters and split them into shift, scale, and gate components.
             shift_msa, scale_msa, gate_msa = self.poseLN_modulation(module_input).chunk(3, dim=-1)
-            
+
             # Adaptive layer normalization and modulation.
             pose_tokens_modulated = gate_msa * modulate(self.adaln_norm(pose_tokens), shift_msa, scale_msa)
             pose_tokens_modulated = pose_tokens_modulated + pose_tokens
-            
-            pose_tokens_modulated = torch.utils.checkpoint.checkpoint(
-                self.trunk,
-                pose_tokens_modulated,
-                use_reentrant=False,
-            )
 
+            pose_tokens_modulated = self.trunk(pose_tokens_modulated)
             # Compute the delta update for the pose encoding.
             pred_pose_enc_delta = self.pose_branch(self.trunk_norm(pose_tokens_modulated))
 
@@ -150,10 +134,7 @@ class CameraHead(nn.Module):
 
             # Apply final activation functions for translation, quaternion, and field-of-view.
             activated_pose = activate_pose(
-                pred_pose_enc,
-                trans_act=self.trans_act,
-                quat_act=self.quat_act,
-                fl_act=self.fl_act,
+                pred_pose_enc, trans_act=self.trans_act, quat_act=self.quat_act, fl_act=self.fl_act
             )
             pred_pose_enc_list.append(activated_pose)
 
