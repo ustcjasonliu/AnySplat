@@ -11,6 +11,56 @@ import numpy as np
 
 from src.model.encoder.vggt.dependency.distortion import apply_distortion, iterative_undistortion, single_undistortion
 
+def batchify_unproject_depth_map_to_point_map(
+    depth_map: torch.Tensor, extrinsics_cam: torch.Tensor, intrinsics_cam: torch.Tensor
+) -> torch.Tensor:
+    """
+    Unproject a batch of depth maps to 3D world coordinates.
+
+    Args:
+        depth_map (torch.Tensor): Batch of depth maps of shape (B, V, H, W, 1) or (B, V, H, W)
+        extrinsics_cam (torch.Tensor): Batch of camera extrinsic matrices of shape (B, V, 3, 4)
+        intrinsics_cam (torch.Tensor): Batch of camera intrinsic matrices of shape (B, V, 3, 3)
+        
+    Returns:
+        torch.Tensor: Batch of 3D world coordinates of shape (S, H, W, 3)
+    """
+
+    # Handle both (S, H, W, 1) and (S, H, W) cases
+    if depth_map.dim() == 5:
+        depth_map = depth_map.squeeze(-1)  # (S, H, W)
+        
+    # Generate batched camera coordinates
+    H, W = depth_map.shape[2:]
+    batch_size, num_views = depth_map.shape[0], depth_map.shape[1]
+    
+    # Intrinsic parameters (S, 3, 3)
+    intrinsics_cam, extrinsics_cam, depth_map = intrinsics_cam.flatten(0, 1), extrinsics_cam.flatten(0, 1), depth_map.flatten(0, 1)
+    fu = intrinsics_cam[:, 0, 0]  # (S,)
+    fv = intrinsics_cam[:, 1, 1]  # (S,)
+    cu = intrinsics_cam[:, 0, 2]  # (S,)
+    cv = intrinsics_cam[:, 1, 2]  # (S,)
+    
+    # Generate grid of pixel coordinates
+    u = torch.arange(W, device=depth_map.device)[None, None, :].expand(batch_size * num_views, H, W)  # (S, H, W)
+    v = torch.arange(H, device=depth_map.device)[None, :, None].expand(batch_size * num_views, H, W)  # (S, H, W)
+    
+    # Unproject to camera coordinates (S, H, W, 3)
+    x_cam = (u - cu[:, None, None]) * depth_map / fu[:, None, None]
+    y_cam = (v - cv[:, None, None]) * depth_map / fv[:, None, None]
+    z_cam = depth_map
+    
+    cam_coords = torch.stack((x_cam, y_cam, z_cam), dim=-1)  # (S, H, W, 3)
+    
+    # Transform to world coordinates
+    cam_to_world = closed_form_inverse_se3(extrinsics_cam)  # (S, 4, 4)
+
+    # homo transformation
+    homo_pts = torch.cat((cam_coords, torch.ones_like(cam_coords[..., :1])), dim=-1).flatten(1, 2)
+    world_coords = torch.bmm(cam_to_world, homo_pts.transpose(1, 2)).transpose(1, 2)[:, :, :3].view(batch_size*num_views, H, W, 3)
+    
+    return world_coords.view(batch_size, num_views, H, W, 3)
+
 
 def unproject_depth_map_to_point_map(
     depth_map: np.ndarray, extrinsics_cam: np.ndarray, intrinsics_cam: np.ndarray

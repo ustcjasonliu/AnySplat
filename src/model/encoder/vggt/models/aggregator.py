@@ -12,10 +12,10 @@ import torch.nn.functional as F
 from torch.utils.checkpoint import checkpoint
 from typing import Optional, Tuple, Union, List, Dict, Any
 
-from vggt.layers import PatchEmbed
-from vggt.layers.block import Block
-from vggt.layers.rope import RotaryPositionEmbedding2D, PositionGetter
-from vggt.layers.vision_transformer import vit_small, vit_base, vit_large, vit_giant2
+from src.model.encoder.vggt.layers import PatchEmbed
+from src.model.encoder.vggt.layers.block import Block
+from src.model.encoder.vggt.layers.rope import RotaryPositionEmbedding2D, PositionGetter
+from src.model.encoder.vggt.layers.vision_transformer import vit_small, vit_base, vit_large, vit_giant2
 import time
 
 logger = logging.getLogger(__name__)
@@ -283,13 +283,13 @@ class Aggregator(nn.Module):
 
         # Set global variables for attention visualization
         if self.vis_attn_map:
-            import vggt.layers.attention as attn_module
+            import src.model.encoder.vggt.layers.attention as attn_module
 
             # Set the global variables that attention.py needs
             attn_module.vis_attn_map = True
             attn_module.current_images = self._load_image_paths()  # Load from temp file
         else:
-            import vggt.layers.attention as attn_module
+            import src.model.encoder.vggt.layers.attention as attn_module
 
             attn_module.vis_attn_map = False
 
@@ -343,7 +343,7 @@ class Aggregator(nn.Module):
                         global_merging = block_num
                         # Set attention_map for visualization
                         if self.vis_attn_map:
-                            import vggt.layers.attention as attn_module
+                            import src.model.encoder.vggt.layers.attention as attn_module
 
                             attn_module.attention_map = block_num
                     tokens, global_idx, global_intermediates = (

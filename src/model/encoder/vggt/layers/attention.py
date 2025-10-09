@@ -7,7 +7,7 @@ from torch import Tensor
 from torch import nn
 import torch.nn.functional as F
 from tqdm.std import tqdm
-from merging.merge import (
+from src.model.encoder.merging.merge import (
     token_merge_bipartite2d,
 )
 import matplotlib.pyplot as plt
@@ -168,7 +168,7 @@ class Attention(nn.Module):
 
             merge_ratio = 0.9
             r = int(x.shape[1] * merge_ratio)
-
+        
             m, u = token_merge_bipartite2d(
                 x,
                 self.patch_width,

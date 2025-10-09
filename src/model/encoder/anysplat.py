@@ -130,8 +130,13 @@ class EncoderAnySplat(Encoder[EncoderAnySplatCfg]):
 
     def __init__(self, cfg: EncoderAnySplatCfg) -> None:
         super().__init__(cfg)
-        model_full = VGGT.from_pretrained("facebook/VGGT-1B")
+        # model_full = VGGT.from_pretrained("facebook/VGGT-1B")
         # model_full = VGGT()
+        model_full = VGGT(merging=0, vis_attn_map=True)
+        ckpt = torch.load("/mnt/public/jason/FastVGGT/ckpt/model_tracker_fixed_e20.pt", map_location="cpu")
+        incompat = model_full.load_state_dict(ckpt, strict=False)
+        model_full = model_full.cuda().eval()
+        model_full = model_full.to(torch.bfloat16)
         self.aggregator = model_full.aggregator.to(torch.bfloat16)
         self.freeze_backbone = cfg.freeze_backbone
         self.distill = cfg.distill
@@ -350,7 +355,7 @@ class EncoderAnySplat(Encoder[EncoderAnySplatCfg]):
                     distill_aggregated_tokens_list, distill_patch_start_idx = (
                         self.distill_aggregator(
                             distill_image.to(torch.bfloat16),
-                            intermediate_layer_idx=self.cfg.intermediate_layer_idx,
+                            # intermediate_layer_idx=self.cfg.intermediate_layer_idx,
                         )
                     )
 

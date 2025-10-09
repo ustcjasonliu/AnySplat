@@ -23,8 +23,8 @@ from scipy.spatial.transform import Rotation
 from torchvision import transforms as TF
 
 
-from vggt.utils.geometry import unproject_depth_map_to_point_map
-from vggt.utils.pose_enc import pose_encoding_to_extri_intri
+from src.model.encoder.vggt.utils.geometry import unproject_depth_map_to_point_map
+from src.model.encoder.vggt.utils.pose_enc import pose_encoding_to_extri_intri
 
 
 def shuffle_deque(dq, seed=None):
