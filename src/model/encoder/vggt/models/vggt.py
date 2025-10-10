@@ -131,16 +131,16 @@ class VGGT(nn.Module, PyTorchModelHubMixin):
             query_points = query_points.unsqueeze(0)
 
         # Save image paths globally for attention visualization
-        if self.vis_attn_map and image_paths is not None:
-            import os
-            import tempfile
-            import pickle
+        # if self.vis_attn_map and image_paths is not None:
+        #     import os
+        #     import tempfile
+        #     import pickle
 
-            # Create a temporary file to store image paths
-            temp_dir = tempfile.gettempdir()
-            image_paths_file = os.path.join(temp_dir, "vggt_image_paths.pkl")
-            with open(image_paths_file, "wb") as f:
-                pickle.dump(image_paths, f)
+        #     # Create a temporary file to store image paths
+        #     temp_dir = tempfile.gettempdir()
+        #     image_paths_file = os.path.join(temp_dir, "vggt_image_paths.pkl")
+        #     with open(image_paths_file, "wb") as f:
+        #         pickle.dump(image_paths, f)
 
         aggregated_tokens_list, patch_start_idx = self.aggregator(images)
 

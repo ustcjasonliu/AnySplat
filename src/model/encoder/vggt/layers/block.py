@@ -85,7 +85,6 @@ class Block(nn.Module):
         del norm1_output
         x = x + self.ls1(attn_output)
         del attn_output
-
         norm2_output = self.norm2(x)
         mlp_output = self.mlp(norm2_output)
         del norm2_output

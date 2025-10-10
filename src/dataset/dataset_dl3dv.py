@@ -216,7 +216,7 @@ class DatasetDL3DV(Dataset):
         return target_indices, context_indices
         
     def getitem(self, index: int, num_context_views: int, patchsize: tuple) -> dict:
-        
+        print("============getitem===========")
         scene = self.scene_ids[index]
         example = self.scenes[scene]
         # load poses
@@ -248,8 +248,8 @@ class DatasetDL3DV(Dataset):
             # target_indices = torch.arange(start = next_batch_index * self.batch_size, 
             #                               end = min((next_batch_index + 1)* self.batch_size , total_frame_size),
             #                               step = 1)
-            if self.global_step > 1000:
-                self.batch_size = 12
+            # if self.global_step > 1000:
+            #     self.batch_size = 12
             total_frame_size , _ , _ = extrinsics.shape
             target_indices, context_indices = self.flexible_sample_indices(total_frame_size - 1, self.batch_size, self.batch_size)
             overlap = torch.tensor([0.])

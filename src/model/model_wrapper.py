@@ -517,7 +517,7 @@ class ModelWrapper(LightningModule):
         # torch.cuda.empty_cache()
         # if self.has_sufficient_space(str(self.train_cfg.output_path)) == False:
         #     raise RuntimeError("Not enough disk space, stopping training to avoid OOM.")
-
+        print(f"Training step {self.global_step} on rank {self.global_rank}, batch_idx {batch_idx}.")
         if isinstance(batch, list):
             batch_combined = None
             for batch_per_dl in batch:
@@ -533,12 +533,11 @@ class ModelWrapper(LightningModule):
                         else:
                             raise NotImplementedError
             batch = batch_combined
-    
         # self.print_gpu_memory("Step1")
         batch: BatchedExample = self.data_shim(batch)
         b, v, c, h, w = batch["context"]["image"].shape
        
-        if v >= 4 and self.global_step > 1000:
+        if v >= 4 and self.global_step >= 0:
             full_batch, extended_batch = self.update_batch_by_diffusion(batch)
             self.is_update_by_diffusion = True
         else:
@@ -558,7 +557,6 @@ class ModelWrapper(LightningModule):
         self.log("train/voxelize_ratio", infos["voxelize_ratio"])
         using_index = torch.arange(v, device=encoder_output.gaussians.means.device)
         batch["using_index"] = using_index
-
         total_loss = self.compute_loss(batch, extended_batch, origin_encoder_output, origin_output)
         if self.global_step % self.detailed_save_interval == 0:
             self.compute_metrics(batch, origin_encoder_output, origin_output)
@@ -585,7 +583,7 @@ class ModelWrapper(LightningModule):
                 f"context = {batch['context']['index'].tolist()}; "
                 f"loss = {total_loss:.6f}; "
             )
-          
+
         self.log("info/global_step", self.global_step)  # hack for ckpt monitor
         # self.print_gpu_memory("Step4")
         # Tell the data loader processes about the current step.
@@ -600,7 +598,6 @@ class ModelWrapper(LightningModule):
             gc.collect()
             torch.cuda.empty_cache()
 
-    
         return total_loss
     
     def on_after_backward(self):
@@ -767,7 +764,7 @@ class ModelWrapper(LightningModule):
     @rank_zero_only
     def validation_step(self, batch, batch_idx, dataloader_idx=0):        
         batch: BatchedExample = self.data_shim(batch)
-
+        print(f"Validation step {self.global_step} on rank {self.global_rank}, batch_idx {batch_idx}, dataloader_idx {dataloader_idx}.")
         if self.global_rank == 0:
             print(
                 f"validation step {self.global_step}; "
@@ -779,8 +776,10 @@ class ModelWrapper(LightningModule):
         b, v, _, h, w = batch["context"]["image"].shape
         assert b == 1
         visualization_dump = {}
-
+        print("model infer start in validation step")
         encoder_output, output = self.model(batch["context"]["image"], self.global_step, visualization_dump=visualization_dump)
+        print("model infer finished in validation step")
+
         gaussians, pred_pose_enc_list, depth_dict = encoder_output.gaussians, encoder_output.pred_pose_enc_list, encoder_output.depth_dict
         pred_context_pose, distill_infos = encoder_output.pred_context_pose, encoder_output.distill_infos
         infos = encoder_output.infos
@@ -798,6 +797,8 @@ class ModelWrapper(LightningModule):
         if gaussian_means.shape[-1] == 3:
             gaussian_means = gaussian_means.mean(dim=-1)
 
+        print("Validation rendering finished, computing metrics...")
+
         # Compute validation metrics.
         rgb_gt = (batch["context"]["image"][0].float() + 1) / 2
         psnr = compute_psnr(rgb_gt, rgb_pred).mean()
@@ -806,7 +807,7 @@ class ModelWrapper(LightningModule):
         self.log(f"val/lpips", lpips)
         ssim = compute_ssim(rgb_gt, rgb_pred).mean()
         self.log(f"val/ssim", ssim)
-
+        print("Validation metrics computed." )
         # depth metrics
         consis_absrel = abs_relative_difference(
             rearrange(output.depth, "b v h w -> (b v) h w"),
@@ -893,7 +894,7 @@ class ModelWrapper(LightningModule):
         # self.logger.log_image(
         #     "cameras", [prep_image(add_border(cameras))], step=self.global_step
         # )
-
+        print("Validation images logged." )
         if self.encoder_visualizer is not None:
             for k, image in self.encoder_visualizer.visualize(
                 batch["context"], self.global_step
