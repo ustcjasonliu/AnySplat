@@ -133,6 +133,7 @@ class EncoderAnySplat(Encoder[EncoderAnySplatCfg]):
     def __init__(self, cfg: EncoderAnySplatCfg) -> None:
         super().__init__(cfg)
         model_full = VGGT.from_pretrained("facebook/VGGT-1B")
+        model_full = model_full.to(torch.bfloat16)
         self.aggregator = model_full.aggregator
         self.freeze_backbone = cfg.freeze_backbone
         self.distill = cfg.distill
@@ -335,52 +336,10 @@ class EncoderAnySplat(Encoder[EncoderAnySplatCfg]):
                 child.patch_width = patch_width
                 child.patch_height = patch_height
 
-    def get_vgg_input_imgs(self, images: torch.Tensor):
-        """
-        批量处理版本，更高效
-        
-        Args:
-            images: 输入图像tensor，形状为 (B, V, C, H, W)
-        
-        Returns:
-            vgg_input_images: 处理后的图像tensor，形状为 (B, V, C, new_H, new_W)
-            patch_width: 宽度方向的patch数量
-            patch_height: 高度方向的patch数量
-        """
-        B, V, C, H, W = images.shape
-                
-        # 重塑为 (B*V, C, H, W)
-        images_flat = images.view(B * V, C, H, W)
-        
-        # 计算新尺寸
-        new_width = 518
-        new_height = round(H * (new_width / W) / 14) * 14
-        
-        # 批量调整大小
-        resized_imgs = F.interpolate(
-            images_flat, 
-            size=(new_height, new_width), 
-            mode='bilinear', 
-            align_corners=False
-        )
-        
-        # 批量中心裁剪（如果需要）
-        if new_height > 518:
-            start_y = (new_height - 518) // 2
-            final_imgs = resized_imgs[:, :, start_y:start_y + 518, :]
-            final_height = 518
-        else:
-            final_imgs = resized_imgs
-            final_height = new_height
-        
-        # 恢复原始形状
-        vgg_input_images = final_imgs.view(B, V, C, final_imgs.shape[-2], final_imgs.shape[-1])
-        
-        # 计算patch维度
-        patch_width = 518 // 14  # 37
-        patch_height = final_height // 14
-        
-        return vgg_input_images, patch_width, patch_height
+    def update_attention(self,patch_width, patch_height):
+        self.update_attention_in_module(self.distill_aggregator, patch_width, patch_height)
+        self.update_attention_in_module(self.aggregator, patch_width, patch_height)
+
 
     def forward(
         self,
@@ -389,10 +348,6 @@ class EncoderAnySplat(Encoder[EncoderAnySplatCfg]):
         visualization_dump: Optional[dict] = None,
     ) -> Gaussians:
         device = image.device
-        image, patch_width, patch_height = self.get_vgg_input_imgs(image)
-        self.update_attention_in_module(self.distill_aggregator, patch_width, patch_height)
-        self.update_attention_in_module(self.aggregator, patch_width, patch_height)
-      
         b, v, _, h, w = image.shape
         distill_infos = {}
         if self.distill:
@@ -416,7 +371,7 @@ class EncoderAnySplat(Encoder[EncoderAnySplatCfg]):
                     )
 
                 # Process with default precision
-                with torch.amp.autocast("cuda", enabled=False):
+                with torch.amp.autocast("cuda", enabled=True, dtype=torch.float16):
                     # Get camera pose information
                     distill_pred_pose_enc_list = self.distill_camera_head(
                         distill_aggregated_tokens_list
@@ -465,10 +420,10 @@ class EncoderAnySplat(Encoder[EncoderAnySplatCfg]):
         with torch.amp.autocast("cuda", enabled=True, dtype=torch.bfloat16):
             aggregated_tokens_list, patch_start_idx = self.aggregator(
                 image.to(torch.bfloat16),
-                intermediate_layer_idx=self.cfg.intermediate_layer_idx,
+                #intermediate_layer_idx=self.cfg.intermediate_layer_idx,
             )
 
-        with torch.amp.autocast("cuda", enabled=False):
+        with torch.amp.autocast("cuda", enabled=True, dtype=torch.float16):
             pred_pose_enc_list = self.camera_head(aggregated_tokens_list)
             last_pred_pose_enc = pred_pose_enc_list[-1]
             extrinsic, intrinsic = pose_encoding_to_extri_intri(

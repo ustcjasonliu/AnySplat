@@ -517,7 +517,9 @@ class ModelWrapper(LightningModule):
         # torch.cuda.empty_cache()
         # if self.has_sufficient_space(str(self.train_cfg.output_path)) == False:
         #     raise RuntimeError("Not enough disk space, stopping training to avoid OOM.")
+        
         print(f"Training step {self.global_step} on rank {self.global_rank}, batch_idx {batch_idx}.")
+        self.model.encoder.update_attention(batch["context"]["patch_width"], batch["context"]["patch_height"])
         if isinstance(batch, list):
             batch_combined = None
             for batch_per_dl in batch:
