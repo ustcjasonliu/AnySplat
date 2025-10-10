@@ -236,9 +236,21 @@ class ModelWrapper(LightningModule):
             return batch, None    
         
         extended_batch = copy.deepcopy(batch) 
-        extended_batch["context"]["image"] = self._diffix_util.process_images(
+        diffix_images = self._diffix_util.process_images(
             input_images=render_result.color,
             ref_image=batch["context"]["image"])
+
+        extended_batch["context"]["image"] = F.interpolate(
+            diffix_images.reshape(extra_b * extra_v, c, diffix_images.shape[-2] , diffix_images.shape[-1]),
+            size=(h, w), 
+            mode='bilinear', 
+            align_corners=False
+        ).reshape(extra_b, extra_v, c, h, w) 
+
+        print("render_result.color shape: ", render_result.color.shape, \
+              "ref_image shape: ", batch["context"]["image"].shape, \
+              "extended_batch image shape: ", extended_batch["context"]["image"].shape)
+
         extended_batch["context"]["depth"] = render_result.depth
         extend_indexes = torch.arange(extra_v, device=batch["context"]["image"].device) + batch["context"]["index"][0][-1] + 1
         extend_indexes = extend_indexes.unsqueeze(0)

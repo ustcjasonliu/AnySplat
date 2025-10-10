@@ -581,8 +581,8 @@ class DifixPipeline(
         negative_prompt_embeds=None,
         callback_on_step_end_tensor_inputs=None,
     ):
-        if height % 8 != 0 or width % 8 != 0:
-            raise ValueError(f"`height` and `width` have to be divisible by 8 but are {height} and {width}.")
+        # if height % 8 != 0 or width % 8 != 0:
+        #     raise ValueError(f"`height` and `width` have to be divisible by 8 but are {height} and {width}.")
 
         if callback_steps is not None and (not isinstance(callback_steps, int) or callback_steps <= 0):
             raise ValueError(

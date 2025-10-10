@@ -59,6 +59,7 @@ class Attention(nn.Module):
         self.kv_group_size = kv_group_size
 
     def forward(self, x: Tensor, pos=None, global_merging=None) -> Tensor:
+
         merge_num = list(range(24))
 
         B, N, C = x.shape

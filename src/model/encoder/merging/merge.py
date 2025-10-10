@@ -109,7 +109,7 @@ def token_merge_bipartite2d(
         # Process other images - fully vectorized batch operations
         if num_imgs > 1:
             cls_indices = (
-                torch.arange(1, num_imgs, device=metric.device) * tokens_per_img
+                torch.arange(1, int(num_imgs), device=metric.device) * tokens_per_img
             )
             cls_indices = cls_indices[:, None] + torch.arange(5, device=metric.device)
             idx_buffer_seq[cls_indices.flatten()] = -1

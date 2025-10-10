@@ -314,7 +314,8 @@ class DatasetDL3DV(Dataset):
         context_images = self.load_frames(input_frames)
         target_images = self.load_frames(target_frame)
         print("origin context_images shape ", context_images.shape, " target_images shape ", target_images.shape)
-
+        context_depth= torch.ones_like(context_images)[:, 0]
+        target_depth = torch.ones_like(target_images)[:, 0]
 
         # context_depth = self.load_depth(input_frames)
         # target_depth = self.load_depth(target_frame)
@@ -345,7 +346,6 @@ class DatasetDL3DV(Dataset):
             extrinsics[:, :3, 3] /= scale
         else:
             scale = 1
-        print("================3===================")
         if self.cfg.relative_pose:
             extrinsics = camera_normalization(extrinsics[context_indices][0:1], extrinsics)
 
@@ -356,14 +356,8 @@ class DatasetDL3DV(Dataset):
 
         if torch.isnan(extrinsics).any() or torch.isinf(extrinsics).any():
             raise Exception("encounter nan or inf in input poses")
-        print("================4===================")
 
-        context_images, patch_width, patch_height = self.get_vgg_input_imgs(context_images)
-        target_images, _, _ = self.get_vgg_input_imgs(target_images)
-        context_depth = torch.ones_like(context_images)[:, 0]
-        target_depth = torch.ones_like(target_images)[:, 0]
-        
-        print("update context_images shape ", context_images.shape, " target_images shape ", target_images.shape, "patch_width ", patch_width, " patch_height ", patch_height)
+  
         example = {
             "context": {
                 "extrinsics": extrinsics[context_indices],
@@ -373,8 +367,6 @@ class DatasetDL3DV(Dataset):
                 "near": self.get_bound("near", len(context_indices)) / scale,
                 "far": self.get_bound("far", len(context_indices)) / scale,
                 "index": context_indices,
-                "patch_height": patch_height,
-                "patch_width": patch_width,
                 # "overlap": overlap,
             },
             "target": {
@@ -385,8 +377,6 @@ class DatasetDL3DV(Dataset):
                 "near": self.get_bound("near", len(target_indices)) / scale,
                 "far": self.get_bound("far", len(target_indices)) / scale,
                 "index": target_indices,
-                "patch_height": patch_height,
-                "patch_width": patch_width,
             },
             "scene": "dl3dv_"+scene,
         }
@@ -399,7 +389,17 @@ class DatasetDL3DV(Dataset):
         else:
             intr_aug = False
         example = apply_crop_shim(example, (patchsize[0] * 14, patchsize[1] * 14), intr_aug=intr_aug)
-        print("================5===================")
+
+        example["context"]["image"], patch_width, patch_height = self.get_vgg_input_imgs(example["context"]["image"])
+        example["target"]["image"], _, _ = self.get_vgg_input_imgs(example["target"]["image"])
+        example["context"]["depth"] = torch.ones_like(example["context"]["image"])[:, 0]
+        example["target"]["depth"] = torch.ones_like(example["target"]["image"])[:, 0]
+        example["context"]["patch_height"] = patch_height
+        example["context"]["patch_width"] = patch_width
+        example["target"]["patch_height"] = patch_height
+        example["target"]["patch_width"] = patch_width
+
+
         image_size = example["context"]["image"].shape[2:]
         context_intrinsics = example["context"]["intrinsics"].clone().detach().numpy()
         context_intrinsics[:, 0] = context_intrinsics[:, 0] * image_size[1]
@@ -425,7 +425,6 @@ class DatasetDL3DV(Dataset):
 
         target_pts3d = torch.ones_like(target_images).permute(0, 2, 3, 1) # [N, H, W, 3]
         target_valid_mask = torch.ones_like(target_images)[:, 0].bool() # [N, H, W]
-        print("================6===================")
         # normalize by context pts3d
         if self.cfg.normalize_by_pts3d:
             transformed_pts3d = context_pts3d[context_valid_mask]
@@ -444,7 +443,8 @@ class DatasetDL3DV(Dataset):
         example["context"]["valid_mask"] = context_valid_mask * -1
         example["target"]["valid_mask"] = target_valid_mask * -1
 
-        print("final context_images shape ", example["context"]["image"].shape, " target_images shape ", example["target"]["image"].shape)
+        print("final context_images shape ", example["context"]["image"].shape, " target_images shape ", example["target"]["image"].shape, \
+              "patch width ",  example["context"]["patch_width"], " patch height ",  example["context"]["patch_height"])
 
         return example
         
