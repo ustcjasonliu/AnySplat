@@ -258,7 +258,6 @@ class DatasetDL3DV(Dataset):
         return final_imgs, patch_width, patch_height
 
     def getitem(self, index: int, num_context_views: int, patchsize: tuple) -> dict:
-        print("============getitem===========")
         scene = self.scene_ids[index]
         example = self.scenes[scene]
         # load poses
@@ -313,7 +312,6 @@ class DatasetDL3DV(Dataset):
         
         context_images = self.load_frames(input_frames)
         target_images = self.load_frames(target_frame)
-        print("origin context_images shape ", context_images.shape, " target_images shape ", target_images.shape)
         context_depth= torch.ones_like(context_images)[:, 0]
         target_depth = torch.ones_like(target_images)[:, 0]
 
@@ -442,9 +440,6 @@ class DatasetDL3DV(Dataset):
         example["target"]["pts3d"] = target_pts3d
         example["context"]["valid_mask"] = context_valid_mask * -1
         example["target"]["valid_mask"] = target_valid_mask * -1
-
-        print("final context_images shape ", example["context"]["image"].shape, " target_images shape ", example["target"]["image"].shape, \
-              "patch width ",  example["context"]["patch_width"], " patch height ",  example["context"]["patch_height"])
 
         return example
         

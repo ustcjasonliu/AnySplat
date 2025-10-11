@@ -530,7 +530,6 @@ class ModelWrapper(LightningModule):
         # if self.has_sufficient_space(str(self.train_cfg.output_path)) == False:
         #     raise RuntimeError("Not enough disk space, stopping training to avoid OOM.")
         
-        print(f"Training step {self.global_step} on rank {self.global_rank}, batch_idx {batch_idx}.")
         self.model.encoder.update_attention(batch["context"]["patch_width"], batch["context"]["patch_height"])
         if isinstance(batch, list):
             batch_combined = None
@@ -551,7 +550,7 @@ class ModelWrapper(LightningModule):
         batch: BatchedExample = self.data_shim(batch)
         b, v, c, h, w = batch["context"]["image"].shape
        
-        if v >= 4 and self.global_step >= 0:
+        if v >= 4 and self.global_step >= 1000:
             full_batch, extended_batch = self.update_batch_by_diffusion(batch)
             self.is_update_by_diffusion = True
         else:

@@ -83,7 +83,6 @@ def token_merge_bipartite2d(
 
     tokens_per_img = w * h + 5
     num_imgs = N // tokens_per_img
-    print(f"w: {w} h: {h} num_imgs: {num_imgs}, tokens_per_img: {tokens_per_img}, N: {N}")
     assert tokens_per_img * num_imgs == N, "Token count doesn't match (w*h+5)*num_imgs"
 
     with torch.no_grad():
