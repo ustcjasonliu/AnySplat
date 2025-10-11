@@ -13,6 +13,7 @@ from typing import Optional, Tuple, Union, List, Dict, Any
 
 from src.model.encoder.vggt.layers import PatchEmbed
 from src.model.encoder.vggt.layers.attention import Attention
+from deformable_attention import DeformableAttention
 from src.model.encoder.vggt.layers.block import Block
 from src.model.encoder.vggt.layers.rope import RotaryPositionEmbedding2D, PositionGetter
 from src.model.encoder.vggt.layers.vision_transformer import vit_small, vit_base, vit_large, vit_giant2

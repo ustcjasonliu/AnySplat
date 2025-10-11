@@ -43,7 +43,10 @@ class Block(nn.Module):
         super().__init__()
         
         self.norm1 = norm_layer(dim)
-        self.attn = attn_class(dim, **attn_kwargs)
+       
+        attn_kwargs.setdefault('dim', dim) 
+        print("dim ", dim, " attn_class ", attn_class,  "attn_kwargs ",  attn_kwargs)
+        self.attn = attn_class(**attn_kwargs)
 
         self.ls1 = LayerScale(dim, init_values=init_values) if init_values else nn.Identity()
         self.drop_path1 = DropPath(drop_path) if drop_path > 0.0 else nn.Identity()
