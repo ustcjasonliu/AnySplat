@@ -77,7 +77,23 @@ class Aggregator(nn.Module):
         # Initialize rotary position embedding if frequency > 0
         self.rope = RotaryPositionEmbedding2D(frequency=rope_freq) if rope_freq > 0 else None
         self.position_getter = PositionGetter() if self.rope is not None else None
+
+        self._num_image_only_frame_blocks = 16
+        self.__num_frame_blocks = 8
+        self.image_only_frame_blocks = nn.ModuleList([
+            DeformableAttention(
+                dim=embed_dim,
+                heads=num_heads,
+                dim_head=embed_dim//num_heads,
+                dropout = 0.1
+            ) for _ in range(self._num_image_only_frame_blocks)
+        ])
+
+        self.image_only_norms = nn.ModuleList([
+            nn.LayerNorm(embed_dim) for _ in range(self._num_image_only_frame_blocks)
+        ])
         
+    
         self.frame_blocks = nn.ModuleList(
             [
                 block_fn(
@@ -95,7 +111,7 @@ class Aggregator(nn.Module):
                     )
             
                 )
-                for _ in range(depth)
+                for _ in range(self.__num_frame_blocks)
             ]
         )
 
@@ -115,7 +131,7 @@ class Aggregator(nn.Module):
                         rope=self.rope,
                     )
                 )
-                for _ in range(depth)
+                for _ in range(self.__num_frame_blocks)
             ]
         )
 
@@ -128,7 +144,7 @@ class Aggregator(nn.Module):
         if self.depth % self.aa_block_size != 0:
             raise ValueError(f"depth ({depth}) must be divisible by aa_block_size ({aa_block_size})")
 
-        self.aa_block_num = self.depth // self.aa_block_size
+        # self.aa_block_num = self.depth // self.aa_block_size // 2
 
         # Note: We have two camera tokens, one for the first frame and one for the rest
         # The same applies for register tokens
@@ -210,8 +226,6 @@ class Aggregator(nn.Module):
                 and the patch_start_idx indicating where patch tokens begin.
         """
         B, S, C_in, H, W = images.shape
-        print(f"Aggregator input images shape: {images.shape}")
-
         if C_in != 3:
             raise ValueError(f"Expected 3 input channels, got {C_in}")
         
@@ -228,15 +242,18 @@ class Aggregator(nn.Module):
             patch_tokens = patch_tokens["x_norm_patchtokens"]
 
         _, P, C = patch_tokens.shape
+        patch_tokens_h = H // 14
+        patch_tokens_w = W // 14
 
         # Expand camera and register tokens to match batch size and sequence length
         camera_token = slice_expand_and_flatten(self.camera_token, B, S)
         register_token = slice_expand_and_flatten(self.register_token, B, S)
 
+        for frame_idx in range(self._num_image_only_frame_blocks):
+            patch_tokens = self._process_image_only_frame_attention(patch_tokens, B, S, C, patch_tokens_h, patch_tokens_w, frame_idx)
+
         # Concatenate special tokens with patch tokens
         tokens = torch.cat([camera_token, register_token, patch_tokens], dim=1)
-        print(f"Aggregator tokens shape after adding special tokens: {tokens.shape}")
-
         pos = None
         if self.rope is not None:
             pos = self.position_getter(B * S, H // self.patch_size, W // self.patch_size, device=images.device)
@@ -251,7 +268,7 @@ class Aggregator(nn.Module):
         # update P because we added special tokens
         _, P, C = tokens.shape
 
-        frame_idx = 0
+        # frame_idx = 0
         global_idx = 0
         output_list = []
         layer_idx = 0
@@ -262,7 +279,7 @@ class Aggregator(nn.Module):
             # Always include the last layer for camera_head
             required_layers.add(self.depth - 1)
 
-        for _ in range(self.aa_block_num):
+        for frame_idx in range(self.__num_frame_blocks):
             for attn_type in self.aa_order:
                 if attn_type == "frame":
                     tokens, frame_idx, frame_intermediates = self._process_frame_attention(
@@ -294,6 +311,33 @@ class Aggregator(nn.Module):
         del frame_intermediates
         del global_intermediates
         return output_list, self.patch_start_idx
+
+    def _process_image_only_frame_attention(self, tokens, B, S, C, H, W, frame_idx):
+        if tokens.shape != (B * S, C, H, W):
+            tokens = tokens.reshape(B, S, H, W, C).view(B * S, H, W, C).permute(0, 3, 1, 2)
+        
+        # by default, self.aa_block_size=1, which processes one block at a time
+        for _ in range(self.aa_block_size):
+            if self.use_checkpoint:
+                tokens = torch.utils.checkpoint.checkpoint(
+                    self.image_only_frame_blocks[frame_idx],
+                    tokens,
+                    use_reentrant=False,
+                )
+                tokens = torch.utils.checkpoint.checkpoint(
+                    self.image_only_norms[frame_idx],
+                    tokens.permute(0, 2, 3, 1),
+                    use_reentrant=False,
+                ).permute(0, 3, 1, 2)
+            else:
+                tokens = self.image_only_frame_blocks[frame_idx](tokens)
+                tokens = self.image_only_norms[frame_idx](tokens.permute(0, 2, 3, 1)).permute(0, 3, 1, 2)
+            
+        tokens = tokens.permute(0, 2, 3, 1).view(B * S, H * W, C)
+        return tokens
+
+ 
+
 
     def _process_frame_attention(self, tokens, B, S, P, C, frame_idx, pos=None):
         """

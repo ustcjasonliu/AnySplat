@@ -28,7 +28,7 @@ model:
     conf_threshold: 0.1
     freeze_module: patch_embed
     voxelize: true
-    intermediate_layer_idx: [4, 11, 17, 23]
+    intermediate_layer_idx: [1, 3, 5, 7]
     
 dataset:
   dl3dv:

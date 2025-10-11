@@ -45,7 +45,6 @@ class Block(nn.Module):
         self.norm1 = norm_layer(dim)
        
         attn_kwargs.setdefault('dim', dim) 
-        print("dim ", dim, " attn_class ", attn_class,  "attn_kwargs ",  attn_kwargs)
         self.attn = attn_class(**attn_kwargs)
 
         self.ls1 = LayerScale(dim, init_values=init_values) if init_values else nn.Identity()
