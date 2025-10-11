@@ -25,8 +25,8 @@ svg.py
 scikit-video
 opencv-python
 Pillow
-huggingface_hub
-gradio
+huggingface_hub==0.25.0 
+gradio==4.44.0
 xformers==0.0.24
 torch_scatter==2.1.2
 moviepy==1.0.3

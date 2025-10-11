@@ -12,6 +12,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from src.model.encoder.vggt.layers import Mlp
+from src.model.encoder.vggt.layers.attention import Attention
 from src.model.encoder.vggt.layers.block import Block
 from src.model.encoder.vggt.heads.head_act import activate_pose
 
@@ -52,9 +53,12 @@ class CameraHead(nn.Module):
             *[
                 Block(
                     dim=dim_in,
-                    num_heads=num_heads,
                     mlp_ratio=mlp_ratio,
                     init_values=init_values,
+                    attn_class=Attention,
+                    attn_kwargs=dict( 
+                      num_heads=num_heads,
+                   )
                 )
                 for _ in range(trunk_depth)
             ]

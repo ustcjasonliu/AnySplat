@@ -10,7 +10,9 @@ import torch.nn as nn
 import torch.nn.functional as F
 from typing import Optional, Tuple, Union, List, Dict, Any
 
+
 from src.model.encoder.vggt.layers import PatchEmbed
+from src.model.encoder.vggt.layers.attention import Attention
 from src.model.encoder.vggt.layers.block import Block
 from src.model.encoder.vggt.layers.rope import RotaryPositionEmbedding2D, PositionGetter
 from src.model.encoder.vggt.layers.vision_transformer import vit_small, vit_base, vit_large, vit_giant2
@@ -79,14 +81,18 @@ class Aggregator(nn.Module):
             [
                 block_fn(
                     dim=embed_dim,
-                    num_heads=num_heads,
                     mlp_ratio=mlp_ratio,
-                    qkv_bias=qkv_bias,
-                    proj_bias=proj_bias,
                     ffn_bias=ffn_bias,
                     init_values=init_values,
-                    qk_norm=qk_norm,
-                    rope=self.rope,
+                    attn_class=Attention,
+                    attn_kwargs=dict(
+                        num_heads=num_heads,
+                        qkv_bias=qkv_bias,
+                        proj_bias=proj_bias,
+                        qk_norm=qk_norm,
+                        rope=self.rope,
+                    )
+            
                 )
                 for _ in range(depth)
             ]
@@ -96,14 +102,17 @@ class Aggregator(nn.Module):
             [
                 block_fn(
                     dim=embed_dim,
-                    num_heads=num_heads,
                     mlp_ratio=mlp_ratio,
-                    qkv_bias=qkv_bias,
-                    proj_bias=proj_bias,
-                    ffn_bias=ffn_bias,
+                    ffn_bias=ffn_bias,       
                     init_values=init_values,
-                    qk_norm=qk_norm,
-                    rope=self.rope,
+                    attn_class=Attention,
+                    attn_kwargs=dict(
+                        num_heads=num_heads,
+                        qkv_bias=qkv_bias,
+                        proj_bias=proj_bias,
+                        qk_norm=qk_norm,
+                        rope=self.rope,
+                    )
                 )
                 for _ in range(depth)
             ]
@@ -200,6 +209,7 @@ class Aggregator(nn.Module):
                 and the patch_start_idx indicating where patch tokens begin.
         """
         B, S, C_in, H, W = images.shape
+        print(f"Aggregator input images shape: {images.shape}")
 
         if C_in != 3:
             raise ValueError(f"Expected 3 input channels, got {C_in}")
@@ -224,6 +234,7 @@ class Aggregator(nn.Module):
 
         # Concatenate special tokens with patch tokens
         tokens = torch.cat([camera_token, register_token, patch_tokens], dim=1)
+        print(f"Aggregator tokens shape after adding special tokens: {tokens.shape}")
 
         pos = None
         if self.rope is not None:

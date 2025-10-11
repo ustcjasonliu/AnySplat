@@ -11,6 +11,7 @@ from functools import partial
 import math
 import logging
 from typing import Sequence, Tuple, Union, Callable
+from .attention import Attention
 
 import torch
 import torch.nn as nn
@@ -141,17 +142,20 @@ class DinoVisionTransformer(nn.Module):
         blocks_list = [
             block_fn(
                 dim=embed_dim,
-                num_heads=num_heads,
                 mlp_ratio=mlp_ratio,
-                qkv_bias=qkv_bias,
-                proj_bias=proj_bias,
                 ffn_bias=ffn_bias,
-                drop_path=dpr[i],
-                norm_layer=norm_layer,
-                act_layer=act_layer,
-                ffn_layer=ffn_layer,
                 init_values=init_values,
-                qk_norm=qk_norm,
+                drop_path=dpr[i],
+                act_layer=act_layer,
+                norm_layer=norm_layer,
+                ffn_layer=ffn_layer,
+                attn_class=Attention,
+                attn_kwargs=dict( 
+                    num_heads=num_heads,
+                    qkv_bias=qkv_bias,
+                    proj_bias=proj_bias,
+                    qk_norm=qk_norm,
+                )
             )
             for i in range(depth)
         ]
