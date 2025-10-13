@@ -84,8 +84,7 @@ class Aggregator(nn.Module):
             DeformableAttention(
                 dim=embed_dim,
                 heads=num_heads,
-                dim_head=embed_dim//num_heads,
-                dropout = 0.1
+                dim_head=embed_dim//num_heads
             ) for _ in range(self._num_image_only_frame_blocks)
         ])
 
