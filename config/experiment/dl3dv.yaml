@@ -23,7 +23,7 @@ model:
     gs_prune: false # ablate: opacity loss
     pred_head_type: depth
     freeze_backbone: false
-    distill: false
+    distill: true
     render_conf: false
     conf_threshold: 0.1
     freeze_module: patch_embed
@@ -63,7 +63,7 @@ trainer:
   precision: bf16-mixed
 
 checkpointing:
-  load: null
+  load: /mnt/public/jason/AnySplat/output/exp_dl3dv/2025-10-13_15-53-20/checkpoints/epoch_18599-step_18600.ckpt
   every_n_train_steps: 100
   save_weights_only: false
   save_top_k: 5

@@ -44,10 +44,12 @@ from .visualization.encoder_visualizer_epipolar_cfg import EncoderVisualizerEpip
 
 root_path = os.path.abspath(".")
 sys.path.append(root_path)
+
 from src.model.encoder.heads.head_modules import TransformerBlockSelfAttn
 from src.model.encoder.vggt.heads.dpt_head import DPTHead
 from src.model.encoder.vggt.layers.mlp import Mlp
 from src.model.encoder.vggt.models.vggt import VGGT
+from src.model.encoder.vggt.models.deformable_aggregator import DeformableAggregator
 
 inf = float("inf")
 
@@ -132,7 +134,7 @@ class EncoderAnySplat(Encoder[EncoderAnySplatCfg]):
         super().__init__(cfg)
         model_full = VGGT.from_pretrained("facebook/VGGT-1B")
         # model_full = VGGT()
-        self.aggregator = model_full.aggregator.to(torch.bfloat16)
+        self.aggregator = DeformableAggregator()
         self.freeze_backbone = cfg.freeze_backbone
         self.distill = cfg.distill
         self.pred_pose = cfg.pred_pose
@@ -144,7 +146,7 @@ class EncoderAnySplat(Encoder[EncoderAnySplatCfg]):
             self.point_head = model_full.point_head
 
         if self.distill:
-            self.distill_aggregator = copy.deepcopy(self.aggregator)
+            self.distill_aggregator = model_full.aggregator.to(torch.bfloat16)
             self.distill_camera_head = copy.deepcopy(self.camera_head)
             self.distill_depth_head = copy.deepcopy(self.depth_head)
             for module in [

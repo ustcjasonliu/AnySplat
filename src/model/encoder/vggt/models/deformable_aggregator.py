@@ -14,7 +14,7 @@ from typing import Optional, Tuple, Union, List, Dict, Any
 from src.model.encoder.vggt.layers import PatchEmbed
 from src.model.encoder.vggt.layers.attention import Attention
 from deformable_attention import DeformableAttention
-from src.model.encoder.vggt.layers.block import Block
+from src.model.encoder.vggt.layers.block import DeformableBlock
 from src.model.encoder.vggt.layers.rope import RotaryPositionEmbedding2D, PositionGetter
 from src.model.encoder.vggt.layers.vision_transformer import vit_small, vit_base, vit_large, vit_giant2
 
@@ -59,7 +59,7 @@ class DeformableAggregator(nn.Module):
         num_heads=16,
         mlp_ratio=4.0,
         num_register_tokens=4,
-        block_fn=Block,
+        block_fn=DeformableBlock,
         qkv_bias=True,
         proj_bias=True,
         ffn_bias=True,

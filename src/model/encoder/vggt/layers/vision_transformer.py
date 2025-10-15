@@ -139,26 +139,45 @@ class DinoVisionTransformer(nn.Module):
         else:
             raise NotImplementedError
 
+        # blocks_list = [
+        #     block_fn(
+        #         dim=embed_dim,
+        #         mlp_ratio=mlp_ratio,
+        #         ffn_bias=ffn_bias,
+        #         init_values=init_values,
+        #         drop_path=dpr[i],
+        #         act_layer=act_layer,
+        #         norm_layer=norm_layer,
+        #         ffn_layer=ffn_layer,
+        #         attn_class=Attention,
+        #         attn_kwargs=dict( 
+        #             num_heads=num_heads,
+        #             qkv_bias=qkv_bias,
+        #             proj_bias=proj_bias,
+        #             qk_norm=qk_norm,
+        #         )
+        #     )
+        #     for i in range(depth)
+        # ]
+
         blocks_list = [
             block_fn(
                 dim=embed_dim,
+                num_heads=num_heads,
                 mlp_ratio=mlp_ratio,
+                qkv_bias=qkv_bias,
+                proj_bias=proj_bias,
                 ffn_bias=ffn_bias,
-                init_values=init_values,
                 drop_path=dpr[i],
-                act_layer=act_layer,
                 norm_layer=norm_layer,
+                act_layer=act_layer,
                 ffn_layer=ffn_layer,
-                attn_class=Attention,
-                attn_kwargs=dict( 
-                    num_heads=num_heads,
-                    qkv_bias=qkv_bias,
-                    proj_bias=proj_bias,
-                    qk_norm=qk_norm,
-                )
+                init_values=init_values,
+                qk_norm=qk_norm,
             )
             for i in range(depth)
         ]
+
         if block_chunks > 0:
             self.chunked_blocks = True
             chunked_blocks = []

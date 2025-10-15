@@ -373,7 +373,7 @@ class ModelWrapper(LightningModule):
             loss_context_ssim = 1.0 - self.ssim_loss_module(rearrange(output.color, "b v c h w -> (b v) c h w"), 
                                                             rearrange(context_gt_img, "b v c h w -> (b v) c h w"))
            
-            total_loss += loss_context_ssim
+            total_loss += 0.1 * loss_context_ssim
 
             if depth_dict is not None and "depth" in get_cfg()["loss"].keys() and self.train_cfg.cxt_depth_weight > 0:
                 depth_loss_idx = list(get_cfg()["loss"].keys()).index("depth")
@@ -420,7 +420,7 @@ class ModelWrapper(LightningModule):
 
                 loss_target_ssim = 1 -  self.ssim_loss_module(rearrange(rendered_rgb, "b v c h w -> (b v) c h w"), 
                                                               rearrange(target_gt_img, "b v c h w -> (b v) c h w"))                                                                            
-                total_loss += loss_target_rgb + loss_target_lpips + loss_target_ssim
+                total_loss += loss_target_rgb + 0.1 * loss_target_lpips + 0.1 * loss_target_ssim
                 global_step_save_folder = str(self.train_cfg.output_path / f"steps_{self.global_step}_train_log")
                 self.log("loss/loss_target_rgb", loss_target_rgb)
                 if self.global_step % self.detailed_save_interval == 0:
@@ -596,9 +596,9 @@ class ModelWrapper(LightningModule):
         self.last_encoder_output_extrisics = copy.deepcopy(pred_all_extrinsic.detach())
 
         del batch
-        if self.global_step % 10 == 0:
-            gc.collect()
-            torch.cuda.empty_cache()
+        #if self.global_step % 1 == 0:
+        gc.collect()
+        torch.cuda.empty_cache()
 
     
         return total_loss

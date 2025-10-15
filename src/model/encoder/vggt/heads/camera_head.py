@@ -49,16 +49,27 @@ class CameraHead(nn.Module):
         self.trunk_depth = trunk_depth
         
         # Build the trunk using a sequence of transformer blocks.
+        # self.trunk = nn.Sequential(
+        #     *[
+        #         Block(
+        #             dim=dim_in,
+        #             mlp_ratio=mlp_ratio,
+        #             init_values=init_values,
+        #             attn_class=Attention,
+        #             attn_kwargs=dict( 
+        #               num_heads=num_heads,
+        #            )
+        #         )
+        #         for _ in range(trunk_depth)
+        #     ]
+        # )
         self.trunk = nn.Sequential(
             *[
                 Block(
                     dim=dim_in,
+                    num_heads=num_heads,
                     mlp_ratio=mlp_ratio,
                     init_values=init_values,
-                    attn_class=Attention,
-                    attn_kwargs=dict( 
-                      num_heads=num_heads,
-                   )
                 )
                 for _ in range(trunk_depth)
             ]
