@@ -56,14 +56,14 @@ data_loader:
     batch_size: 1 # not used here
     
 trainer:
-  max_steps: 30000
+  max_steps: -1
   val_check_interval: 500
   num_nodes: 1
   accumulate_grad_batches: 1
   precision: bf16-mixed
 
 checkpointing:
-  load: /mnt/public/jason/AnySplat/output/exp_dl3dv/2025-10-13_15-53-20/checkpoints/epoch_18599-step_18600.ckpt
+  load: /mnt/public/jason/AnySplat/output/exp_dl3dv/2025-10-15_21-38-24/checkpoints/epoch_29998-step_30000.ckpt
   every_n_train_steps: 100
   save_weights_only: false
   save_top_k: 5

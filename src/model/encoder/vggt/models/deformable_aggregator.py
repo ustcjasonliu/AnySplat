@@ -245,8 +245,8 @@ class DeformableAggregator(nn.Module):
         patch_tokens_w = W // 14
 
         # Expand camera and register tokens to match batch size and sequence length
-        camera_token = slice_expand_and_flatten(self.camera_token, B, S)
-        register_token = slice_expand_and_flatten(self.register_token, B, S)
+        camera_token = slice_expand_and_flatten_multi_fix_token(self.camera_token, B, S)
+        register_token = slice_expand_and_flatten_multi_fix_token(self.register_token, B, S)
 
         for frame_idx in range(self._num_image_only_frame_blocks):
             patch_tokens = self._process_image_only_frame_attention(patch_tokens, B, S, C, patch_tokens_h, patch_tokens_w, frame_idx)
@@ -396,7 +396,7 @@ class DeformableAggregator(nn.Module):
         return tokens, global_idx, intermediates
 
 
-def slice_expand_and_flatten(token_tensor, B, S):
+def slice_expand_and_flatten_multi_fix_token(token_tensor, B, S):
     """
     Processes specialized tokens with shape (1, 2, X, C) for multi-frame processing:
     1) Uses the first position (index=0) for the first frame only
@@ -411,9 +411,9 @@ def slice_expand_and_flatten(token_tensor, B, S):
     """
 
     # Slice out the "query" tokens => shape (1, 1, ...)
-    query = token_tensor[:, 0:1, ...].expand(B, 1, *token_tensor.shape[2:])
+    query = token_tensor[:, 0:1, ...].expand(B, 3, *token_tensor.shape[2:])
     # Slice out the "other" tokens => shape (1, S-1, ...)
-    others = token_tensor[:, 1:, ...].expand(B, S - 1, *token_tensor.shape[2:])
+    others = token_tensor[:, 1:, ...].expand(B, S - 3, *token_tensor.shape[2:])
     # Concatenate => shape (B, S, ...)
     combined = torch.cat([query, others], dim=1)
 
