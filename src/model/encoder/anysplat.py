@@ -288,6 +288,38 @@ class EncoderAnySplat(Encoder[EncoderAnySplatCfg]):
             padded.append(t)
         return torch.stack(padded)
 
+    def voxel_normal_calculation(self, pts3d_flat, unique_voxels, voxel_pts, inverse_indices, w):   
+        voxel_num = unique_voxels.shape[0]
+        delta = pts3d_flat - voxel_pts                                                # [N,3]
+        # 6 个独立项向量化
+        xx = w * delta[:, 0] * delta[:, 0]
+        yy = w * delta[:, 1] * delta[:, 1]
+        zz = w * delta[:, 2] * delta[:, 2]
+        xy = w * delta[:, 0] * delta[:, 1]
+        xz = w * delta[:, 0] * delta[:, 2]
+        yz = w * delta[:, 1] * delta[:, 2]
+        # scatter 到 6×voxel_num
+        cov_xx = torch_scatter.scatter_add(xx, inverse_indices, dim=0, dim_size=voxel_num)
+        cov_yy = torch_scatter.scatter_add(yy, inverse_indices, dim=0, dim_size=voxel_num)
+        cov_zz = torch_scatter.scatter_add(zz, inverse_indices, dim=0, dim_size=voxel_num)
+        cov_xy = torch_scatter.scatter_add(xy, inverse_indices, dim=0, dim_size=voxel_num)
+        cov_xz = torch_scatter.scatter_add(xz, inverse_indices, dim=0, dim_size=voxel_num)
+        cov_yz = torch_scatter.scatter_add(yz, inverse_indices, dim=0, dim_size=voxel_num)
+        # 组装 3×3 协方差
+        cov = torch.zeros((voxel_num, 3, 3), device=pts3d_flat.device)
+        cov[:, 0, 0] = cov_xx
+        cov[:, 1, 1] = cov_yy
+        cov[:, 2, 2] = cov_zz
+        cov[:, 0, 1] = cov_xy; cov[:, 1, 0] = cov_xy
+        cov[:, 0, 2] = cov_xz; cov[:, 2, 0] = cov_xz
+        cov[:, 1, 2] = cov_yz; cov[:, 2, 1] = cov_yz
+        # 批特征值分解
+
+        _, _, V = torch.svd(cov)          # V: [voxel_num,3,3]
+        normal = V[:, :, 2]               # 最小奇异值对应列
+        normal = torch.nn.functional.normalize(normal, dim=1)
+        return normal
+
     def voxelizaton_with_fusion(self, img_feat, pts3d, voxel_size, conf=None):
         # img_feat: B*V, C, H, W
         # pts3d: B*V, 3, H, W
@@ -324,8 +356,12 @@ class EncoderAnySplat(Encoder[EncoderAnySplatCfg]):
         voxel_feats = scatter_add(
             weighted_feats, inverse_indices, dim=0
         )  # [num_unique_voxels, feat_dim]
+        
+        center_exp = voxel_pts[inverse_indices]
+        normal = self.voxel_normal_calculation(pts3d_flatten, unique_voxels, center_exp, inverse_indices, weights[:,-1])
 
-        return voxel_pts, voxel_feats
+
+        return voxel_pts, voxel_feats, normals
 
     def forward(
         self,
@@ -459,10 +495,10 @@ class EncoderAnySplat(Encoder[EncoderAnySplatCfg]):
 
         anchor_feats, conf = out[:, :, : self.raw_gs_dim], out[:, :, self.raw_gs_dim]
 
-        neural_feats_list, neural_pts_list = [], []
+        neural_feats_list, neural_pts_list, neural_normals_list = [], [], []
         if self.cfg.voxelize:
             for b_i in range(b):
-                neural_pts, neural_feats = self.voxelizaton_with_fusion(
+                neural_pts, neural_feats, neural_normals = self.voxelizaton_with_fusion(
                     anchor_feats[b_i],
                     pts_all[b_i].permute(0, 3, 1, 2).contiguous(),
                     self.voxel_size,
@@ -470,6 +506,7 @@ class EncoderAnySplat(Encoder[EncoderAnySplatCfg]):
                 )
                 neural_feats_list.append(neural_feats)
                 neural_pts_list.append(neural_pts)
+                neural_normals_list.append(neural_normals)
         else:
             for b_i in range(b):
                 neural_feats_list.append(
