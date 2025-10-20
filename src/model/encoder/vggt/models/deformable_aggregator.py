@@ -79,7 +79,7 @@ class DeformableAggregator(nn.Module):
         self.position_getter = PositionGetter() if self.rope is not None else None
 
         self._num_image_only_frame_blocks = 16
-        self.__num_frame_blocks = 4
+        self.__num_frame_blocks = 8
         self.image_only_frame_blocks = nn.ModuleList([
             DeformableAttention(
                 dim=embed_dim,

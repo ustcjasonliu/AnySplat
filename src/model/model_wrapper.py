@@ -415,15 +415,15 @@ class ModelWrapper(LightningModule):
                 target_gt_img = (batch["target"]["image"] + 1) / 2
                 delta = rendered_rgb - target_gt_img
                 loss_target_rgb = get_cfg()[ 'loss']['mse']['weight'] * torch.nan_to_num((delta**2).mean(), nan=0.0, posinf=0.0, neginf=0.0)
-                lpips_loss_idx = list(get_cfg()["loss"].keys()).index("lpips")
-                loss_target_lpips = 0.1 * torch.nan_to_num(self.losses[lpips_loss_idx].lpips.forward(rearrange(rendered_rgb, "b v c h w -> (b v) c h w"), 
-                                                                                                    rearrange(target_gt_img, "b v c h w -> (b v) c h w"), 
-                                                                                                    normalize=True).mean(), 
-                                                                                                    nan=0.0, posinf=0.0, neginf=0.0)
+                # lpips_loss_idx = list(get_cfg()["loss"].keys()).index("lpips")
+                # loss_target_lpips = 0.1 * torch.nan_to_num(self.losses[lpips_loss_idx].lpips.forward(rearrange(rendered_rgb, "b v c h w -> (b v) c h w"), 
+                #                                                                                     rearrange(target_gt_img, "b v c h w -> (b v) c h w"), 
+                #                                                                                     normalize=True).mean(), 
+                #                                                                                     nan=0.0, posinf=0.0, neginf=0.0)
 
                 loss_target_ssim = 0.1 * (1 -  self.ssim_loss_module(rearrange(rendered_rgb, "b v c h w -> (b v) c h w"), 
                                                                      rearrange(target_gt_img, "b v c h w -> (b v) c h w")))                                                                            
-                total_loss += loss_target_rgb + loss_target_lpips + loss_target_ssim
+                total_loss += loss_target_rgb  + loss_target_ssim
                 global_step_save_folder = str(self.train_cfg.output_path / f"steps_{self.global_step}_train_log")
                 
                 self.log("loss/loss_target_rgb", loss_target_rgb)
@@ -453,7 +453,7 @@ class ModelWrapper(LightningModule):
             print(f"loss/target_rgb: {loss_target_rgb}")
             # print(f"loss/context_pose: {loss_context_pose}")
             print(f"loss/target_ssim: {loss_target_ssim}")
-            print(f"loss/target_lpips: {loss_target_lpips}")
+            # print(f"loss/target_lpips: {loss_target_lpips}")
             if extended_batch is not None:
                 print(f"loss/diffusion_rgb: {loss_diffusion_rgb}")
                 print(f"loss/diffusion_lpips: {loss_diffusion_lpips}")
