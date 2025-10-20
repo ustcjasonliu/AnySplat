@@ -53,7 +53,7 @@ from src.model.encoder.vggt.heads.dpt_head import DPTHead
 from src.model.encoder.vggt.layers.mlp import Mlp
 from src.model.encoder.vggt.models.vggt import VGGT
 from src.model.encoder.vggt.models.deformable_aggregator import DeformableAggregator
-
+from src.misc.utils import mem_profile
 
 inf = float("inf")
 
@@ -367,6 +367,7 @@ class EncoderAnySplat(Encoder[EncoderAnySplatCfg]):
 
         return voxel_pts, voxel_feats, normals
 
+    
     def forward(
         self,
         image: torch.Tensor,

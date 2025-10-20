@@ -177,6 +177,7 @@ class ModelWrapper(LightningModule):
         self.last_batch_context_extrinsics = None
         self.last_encoder_output_extrisics = None
     
+
         
     def on_train_epoch_start(self) -> None:
         # our custom dataset and sampler has to have epoch set by calling set_epoch
@@ -370,7 +371,7 @@ class ModelWrapper(LightningModule):
                 if self.global_step % self.log_save_interval == 0:
                     print(f"loss/{loss_fn.name}:{loss} ")
                 total_loss = total_loss + loss
-            context_gt_img = (batch["target"]["image"] + 1) / 2
+            context_gt_img = (batch["context"]["image"] + 1) / 2
             loss_context_ssim = 0.1 * (1.0 - self.ssim_loss_module(rearrange(output.color, "b v c h w -> (b v) c h w"), 
                                                                    rearrange(context_gt_img, "b v c h w -> (b v) c h w")))
            
