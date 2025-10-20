@@ -1,4 +1,4 @@
-import torch
+import torch, time, functools
 
 from src.visualization.color_map import apply_color_map_to_image
 import torch.distributed as dist
@@ -71,3 +71,27 @@ def get_rank():
     if not is_dist_avail_and_initialized():
         return 0
     return dist.get_rank()
+
+
+
+
+def cuda_mem(title: str, reset_peak=False):
+    torch.cuda.synchronize()                   
+    alloc = torch.cuda.memory_allocated() / 1024**3
+    reserved = torch.cuda.memory_reserved() / 1024**3
+    peak = torch.cuda.max_memory_allocated() / 1024**3
+    print(f"{title:>30}  |  alloc {alloc:5.2f} GB  |  reserved {reserved:5.2f} GB  |  peak {peak:5.2f} GB")
+    if reset_peak:
+        torch.cuda.reset_peak_memory_stats()
+
+def mem_profile(step_name):
+    """装饰器：给任意函数包一层显存打印"""
+    def decorator(fn):
+        @functools.wraps(fn)
+        def wrapper(*args, **kwargs):
+            cuda_mem(f"before {step_name}", reset_peak=True)
+            out = fn(*args, **kwargs)
+            cuda_mem(f"after  {step_name}")
+            return out
+        return wrapper
+    return decorator

@@ -10,6 +10,7 @@ from typing import List, Literal, Optional
 import torch
 import torch.nn.functional as F
 import torchvision
+import torch_scatter 
 from einops import rearrange
 from huggingface_hub import PyTorchModelHubMixin
 from jaxtyping import Float
@@ -32,6 +33,8 @@ from torch_scatter import scatter_add, scatter_max
 from ..types import Gaussians
 from .backbone import Backbone, BackboneCfg, get_backbone
 
+
+
 from .backbone.croco.misc import transpose_to_landscape
 from .common.gaussian_adapter import (
     GaussianAdapter,
@@ -50,6 +53,7 @@ from src.model.encoder.vggt.heads.dpt_head import DPTHead
 from src.model.encoder.vggt.layers.mlp import Mlp
 from src.model.encoder.vggt.models.vggt import VGGT
 from src.model.encoder.vggt.models.deformable_aggregator import DeformableAggregator
+
 
 inf = float("inf")
 
@@ -96,7 +100,7 @@ class EncoderAnySplatCfg:
     pred_pose: bool = True
     gt_pose_to_pts: bool = False
     gs_prune: bool = False
-    opacity_threshold: float = 0.001
+    opacity_threshold: float = 0.05
     gs_keep_ratio: float = 1.0
     pred_head_type: Literal["depth", "point"] = "point"
     freeze_backbone: bool = False
@@ -316,9 +320,9 @@ class EncoderAnySplat(Encoder[EncoderAnySplatCfg]):
         # 批特征值分解
 
         _, _, V = torch.svd(cov)          # V: [voxel_num,3,3]
-        normal = V[:, :, 2]               # 最小奇异值对应列
-        normal = torch.nn.functional.normalize(normal, dim=1)
-        return normal
+        normals = V[:, :, 2]               # 最大奇异值对应列
+        normals = torch.nn.functional.normalize(normals, dim=1)
+        return normals
 
     def voxelizaton_with_fusion(self, img_feat, pts3d, voxel_size, conf=None):
         # img_feat: B*V, C, H, W
@@ -358,7 +362,7 @@ class EncoderAnySplat(Encoder[EncoderAnySplatCfg]):
         )  # [num_unique_voxels, feat_dim]
         
         center_exp = voxel_pts[inverse_indices]
-        normal = self.voxel_normal_calculation(pts3d_flatten, unique_voxels, center_exp, inverse_indices, weights[:,-1])
+        normals = self.voxel_normal_calculation(pts3d_flatten, unique_voxels, center_exp, inverse_indices, weights[:,-1])
 
 
         return voxel_pts, voxel_feats, normals
@@ -523,6 +527,10 @@ class EncoderAnySplat(Encoder[EncoderAnySplatCfg]):
             neural_pts_list, (max_voxels,), -1e4
         )  # -1 == invalid voxel
 
+        neural_normals = self.pad_tensor_list(
+            neural_normals_list, (max_voxels,), -1e4
+        )  # -1 == invalid voxel
+
         depths = neural_pts[..., -1].unsqueeze(-1)
         densities = neural_feats[..., 0].sigmoid()
 
@@ -545,9 +553,9 @@ class EncoderAnySplat(Encoder[EncoderAnySplatCfg]):
             opacity_threshold = self.cfg.opacity_threshold
             gaussian_usage = opacity > opacity_threshold  # (B, N)
 
-            print(
-                f"based on opacity threshold {opacity_threshold}, pruned {gaussian_usage.shape[1] - neural_pts.shape[1]} gaussians out of {gaussian_usage.shape[1]}"
-            )
+            # print(
+            #     f"based on opacity threshold {opacity_threshold}, pruned {gaussian_usage.shape[1] - gaussian_usage.sum()} gaussians out of {gaussian_usage.shape[1]}"
+            # )
 
             if (gaussian_usage.sum() / gaussian_usage.numel()) > self.cfg.gs_keep_ratio:
                 # rank by opacity
@@ -563,6 +571,7 @@ class EncoderAnySplat(Encoder[EncoderAnySplatCfg]):
                 neural_feats[gaussian_usage].view(b, -1, self.raw_gs_dim).contiguous()
             )
             opacity = opacity[gaussian_usage].view(b, -1).contiguous()
+            neural_normals = neural_normals[gaussian_usage].view(b, -1, 3).contiguous()
 
             print(
                 f"finally pruned {gaussian_usage.shape[1] - neural_pts.shape[1]} gaussians out of {gaussian_usage.shape[1]}"
@@ -586,16 +595,17 @@ class EncoderAnySplat(Encoder[EncoderAnySplatCfg]):
         infos = {}
         infos["scene_scale"] = scene_scale
         infos["voxelize_ratio"] = densities.shape[1] / (h * w * v)
+        infos["gaussian_normals"] = neural_normals
+
         if global_step % 100  == 0:
             print(
-                f"scene scale: {scene_scale:.3f}, pixel-wise num: {h*w*v}, after voxelize: {neural_pts.shape[1]}, voxelize ratio: {infos['voxelize_ratio']:.3f}"
+                f"scene scale: {scene_scale:.3f}, pixel-wise num: {h*w*v}, after voxelize: {neural_pts.shape[1]}, voxelize ratio: {infos['voxelize_ratio']:.3f} gaussians noranmals shape: {neural_normals.shape}"
             )
             print(
                 f"Gaussians attributes: \n"
                 f"opacities: mean: {gaussians.opacities.mean()}, min: {gaussians.opacities.min()}, max: {gaussians.opacities.max()} \n"
                 f"scales: mean: {gaussians.scales.mean()}, min: {gaussians.scales.min()}, max: {gaussians.scales.max()}"
             )
-
             print("B:", b, "V:", v, "H:", h, "W:", w)
         extrinsic_padding = (
             torch.tensor([0, 0, 0, 1], device=device, dtype=extrinsic.dtype)

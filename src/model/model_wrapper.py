@@ -176,6 +176,7 @@ class ModelWrapper(LightningModule):
         self.is_update_by_diffusion = False
         self.last_batch_context_extrinsics = None
         self.last_encoder_output_extrisics = None
+    
         
     def on_train_epoch_start(self) -> None:
         # our custom dataset and sampler has to have epoch set by calling set_epoch
@@ -423,6 +424,7 @@ class ModelWrapper(LightningModule):
                                                                      rearrange(target_gt_img, "b v c h w -> (b v) c h w")))                                                                            
                 total_loss += loss_target_rgb + loss_target_lpips + loss_target_ssim
                 global_step_save_folder = str(self.train_cfg.output_path / f"steps_{self.global_step}_train_log")
+                
                 self.log("loss/loss_target_rgb", loss_target_rgb)
                 if self.global_step % self.detailed_save_interval == 0:
                     save_video(target_gt_img[0], os.path.join(global_step_save_folder, f"nvs_gt_image.mp4"))
