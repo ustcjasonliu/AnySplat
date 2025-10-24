@@ -125,7 +125,7 @@ class UnifiedGaussianAdapter(GaussianAdapter):
         scales, rotations, sh = raw_gaussians.split((3, 4, 3 * self.d_sh), dim=-1)
         
         scales = 0.001 * F.softplus(scales)
-        scales = scales.clamp_max(0.02)
+        scales = scales.clamp_max(0.002)
         
         # Normalize the quaternion features to yield a valid quaternion.
         rotations = rotations / (rotations.norm(dim=-1, keepdim=True) + eps)

@@ -93,7 +93,7 @@ class DatasetDL3DV(Dataset):
                 self.scene_ids[index] = scene_id
                 index += 1
         print(f"DL3DV: {self.stage}: loaded {len(self.scene_ids)} scenes")
-        self.batch_size = 24
+        self.batch_size = 28
         self.batch_index = 0
         self.num_batches = len(self.scene_ids) // self.batch_size + 1
         self.global_step = 0

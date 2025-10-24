@@ -194,7 +194,7 @@ class ModelWrapper(LightningModule):
         if hasattr(self.trainer.datamodule.val_loader.sampler, "set_epoch"):
             self.trainer.datamodule.val_loader.sampler.set_epoch(self.current_epoch)
 
-    def save_depth_and_rgb(self, num_views, num_origin_views, video, depth, save_path):
+    def save_depth_and_rgb(self, batch, num_views, num_origin_views, video, depth, save_path):
         """Save the depth and rgb video to the save_path."""
      
         depth_norm = (depth - depth[::num_views].quantile(0.01)) / (
@@ -207,6 +207,8 @@ class ModelWrapper(LightningModule):
         depth_colored = depth_colored.clip(min=0, max=1)
         save_video(depth_colored[:num_origin_views], os.path.join(save_path, f"predict_context_depth.mp4"))
         save_video(video[:num_origin_views], os.path.join(save_path, f"predict_context_rgb.mp4"))
+        origin_image =  (batch["context"]["image"]+ 1) / 2
+        save_video(origin_image[0], os.path.join(save_path, f"origin_rgb.mp4"))
         if num_views > num_origin_views:
             save_video(depth_colored[num_origin_views:], os.path.join(save_path, f"predict_interpolate_depth.mp4"))
             save_video(video[num_origin_views:], os.path.join(save_path, f"predict_interpolate_context_rgb.mp4"))
@@ -402,7 +404,7 @@ class ModelWrapper(LightningModule):
             # we want to use vggt as gt for temp
             # loss_context_pose = self.loss_pose(pred_pose_enc_list, batch, start_index=0, end_index=v)
             # total_loss += 0.1 * loss_context_pose["loss_camera"]
-            if gaussians is not None:
+            if False: #gaussians is not None:
                 with torch.no_grad():
                     target_extrinsics = align_and_transform(batch["context"]["extrinsics"], 
                                                             encoder_output.pred_context_pose['extrinsic'], 
@@ -450,9 +452,9 @@ class ModelWrapper(LightningModule):
         if self.global_step % self.log_save_interval == 0:                                                    
             print(f"loss/total: {total_loss} ")
             print(f"loss/context_ssim: {loss_context_ssim}", )
-            print(f"loss/target_rgb: {loss_target_rgb}")
+            # print(f"loss/target_rgb: {loss_target_rgb}")
             # print(f"loss/context_pose: {loss_context_pose}")
-            print(f"loss/target_ssim: {loss_target_ssim}")
+            # print(f"loss/target_ssim: {loss_target_ssim}")
             # print(f"loss/target_lpips: {loss_target_lpips}")
             if extended_batch is not None:
                 print(f"loss/diffusion_rgb: {loss_diffusion_rgb}")
@@ -461,7 +463,7 @@ class ModelWrapper(LightningModule):
 
         return total_loss
 
-    def save_for_visualization(self, num_views, num_origin_views, output, encoder_output):
+    def save_for_visualization(self, batch, num_views, num_origin_views, output, encoder_output):
         global_step_save_folder = str(self.train_cfg.output_path / f"steps_{self.global_step}_train_log")
         if not os.path.exists(global_step_save_folder):
             os.makedirs(global_step_save_folder)
@@ -477,7 +479,7 @@ class ModelWrapper(LightningModule):
             Path(plyfile),
             save_sh_dc_only=True,
         )
-        self.save_depth_and_rgb(num_views, num_origin_views, output.color[0].clip(min=0, max=1), output.depth[0], global_step_save_folder)
+        self.save_depth_and_rgb(batch, num_views, num_origin_views, output.color[0].clip(min=0, max=1), output.depth[0], global_step_save_folder)
         pred_all_extrinsic = encoder_output.pred_context_pose['extrinsic']
         predict_context_extrinsics = pred_all_extrinsic[:, :num_origin_views]
         predict_extra_extrinsics = pred_all_extrinsic[:, num_origin_views:]
@@ -566,7 +568,7 @@ class ModelWrapper(LightningModule):
         total_loss = self.compute_loss(batch, extended_batch, origin_encoder_output, origin_output)
         if self.global_step % self.detailed_save_interval == 0:
             self.compute_metrics(batch, origin_encoder_output, origin_output)
-            self.save_for_visualization(full_batch["context"]["image"].shape[1], batch["context"]["image"].shape[1], origin_output, origin_encoder_output)
+            self.save_for_visualization(batch, full_batch["context"]["image"].shape[1], batch["context"]["image"].shape[1], origin_output, origin_encoder_output)
 
         # self.print_gpu_memory("Step3")
         # Skip batch if loss is too high after certain step

@@ -20,7 +20,7 @@ model:
     voxel_size: 0.002
     pred_pose: true
     anchor_feat_dim: 128
-    gs_prune: true # ablate: opacity loss
+    gs_prune: false # ablate: opacity loss
     pred_head_type: depth
     freeze_backbone: false
     distill: true
@@ -63,7 +63,7 @@ trainer:
   precision: bf16-mixed
 
 checkpointing:
-  load: /mnt/public/jason/AnySplat/output/exp_dl3dv/2025-10-15_21-38-24/checkpoints/epoch_29998-step_30000.ckpt
+  load: /mnt/public/jason/AnySplat/output/exp_dl3dv/2025-10-21_09-59-07/checkpoints/epoch_4199-step_4200.ckpt
   every_n_train_steps: 100
   save_weights_only: false
   save_top_k: 5
