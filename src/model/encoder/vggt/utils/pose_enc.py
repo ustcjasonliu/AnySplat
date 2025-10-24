@@ -9,10 +9,7 @@ from .rotation import quat_to_mat, mat_to_quat
 
 
 def extri_intri_to_pose_encoding(
-    extrinsics,
-    intrinsics,
-    image_size_hw=None,  # e.g., (256, 512)
-    pose_encoding_type="absT_quaR_FoV",
+    extrinsics, intrinsics, image_size_hw=None, pose_encoding_type="absT_quaR_FoV"  # e.g., (256, 512)
 ):
     """Convert camera extrinsics and intrinsics to a compact pose encoding.
 
@@ -45,7 +42,7 @@ def extri_intri_to_pose_encoding(
 
     # extrinsics: BxSx3x4
     # intrinsics: BxSx3x3
-    
+
     if pose_encoding_type == "absT_quaR_FoV":
         R = extrinsics[:, :, :3, :3]  # BxSx3x3
         T = extrinsics[:, :, :3, 3]  # BxSx3
@@ -63,10 +60,7 @@ def extri_intri_to_pose_encoding(
 
 
 def pose_encoding_to_extri_intri(
-    pose_encoding,
-    image_size_hw=None,  # e.g., (256, 512)
-    pose_encoding_type="absT_quaR_FoV",
-    build_intrinsics=True,
+    pose_encoding, image_size_hw=None, pose_encoding_type="absT_quaR_FoV", build_intrinsics=True  # e.g., (256, 512)
 ):
     """Convert a pose encoding back to camera extrinsics and intrinsics.
 
@@ -110,15 +104,15 @@ def pose_encoding_to_extri_intri(
         quat = pose_encoding[..., 3:7]
         fov_h = pose_encoding[..., 7]
         fov_w = pose_encoding[..., 8]
-        
+
         R = quat_to_mat(quat)
         extrinsics = torch.cat([R, T[..., None]], dim=-1)
-        
+
         if build_intrinsics:
             H, W = image_size_hw
-            fy = (H / 2.0) / (torch.tan(fov_h / 2.0) + 1e-3)
-            fx = (W / 2.0) / (torch.tan(fov_w / 2.0) + 1e-3)
-            intrinsics = torch.zeros(pose_encoding.shape[:2] + (3, 3), device=pose_encoding.device, dtype=pose_encoding.dtype)
+            fy = (H / 2.0) / torch.tan(fov_h / 2.0)
+            fx = (W / 2.0) / torch.tan(fov_w / 2.0)
+            intrinsics = torch.zeros(pose_encoding.shape[:2] + (3, 3), device=pose_encoding.device)
             intrinsics[..., 0, 0] = fx
             intrinsics[..., 1, 1] = fy
             intrinsics[..., 0, 2] = W / 2

@@ -76,7 +76,7 @@ def activate_head(out, activation="norm_exp", conf_activation="expp1"):
     # Split into xyz (first C-1 channels) and confidence (last channel)
     xyz = fmap[:, :, :, :-1]
     conf = fmap[:, :, :, -1]
-    
+
     if activation == "norm_exp":
         d = xyz.norm(dim=-1, keepdim=True).clamp(min=1e-8)
         xyz_normed = xyz / d

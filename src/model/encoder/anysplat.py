@@ -25,6 +25,8 @@ from src.model.encoder.vggt.utils.geometry import (
     batchify_unproject_depth_map_to_point_map,
     unproject_depth_map_to_point_map,
 )
+
+
 from src.model.encoder.vggt.utils.pose_enc import pose_encoding_to_extri_intri
 from src.utils.geometry import get_rel_pos  # used for model hub
 from torch import nn, Tensor
@@ -137,8 +139,10 @@ class EncoderAnySplat(Encoder[EncoderAnySplatCfg]):
     def __init__(self, cfg: EncoderAnySplatCfg) -> None:
         super().__init__(cfg)
         model_full = VGGT.from_pretrained("facebook/VGGT-1B")
+
         # model_full = VGGT()
         self.aggregator = DeformableAggregator()
+
         self.freeze_backbone = cfg.freeze_backbone
         self.distill = cfg.distill
         self.pred_pose = cfg.pred_pose
@@ -367,7 +371,21 @@ class EncoderAnySplat(Encoder[EncoderAnySplatCfg]):
 
         return voxel_pts, voxel_feats, normals
 
-    
+
+    def update_attention_in_module(self, module, patch_width, patch_height):
+        for name, child in module.named_children():
+            # Recursively update submodules
+            self.update_attention_in_module(child, patch_width, patch_height)
+            # If it is an attention layer, update its patch dimensions
+            if hasattr(child, "patch_width") and hasattr(child, "patch_height"):
+                child.patch_width = patch_width
+                child.patch_height = patch_height
+
+    def update_attention(self,patch_width, patch_height):
+        self.update_attention_in_module(self.distill_aggregator, patch_width, patch_height)
+        # self.update_attention_in_module(self.aggregator, patch_width, patch_height)
+
+
     def forward(
         self,
         image: torch.Tensor,
@@ -393,12 +411,12 @@ class EncoderAnySplat(Encoder[EncoderAnySplatCfg]):
                     distill_aggregated_tokens_list, distill_patch_start_idx = (
                         self.distill_aggregator(
                             distill_image.to(torch.bfloat16),
-                            intermediate_layer_idx=self.cfg.intermediate_layer_idx,
+                            # intermediate_layer_idx=self.cfg.intermediate_layer_idx,
                         )
                     )
 
                 # Process with default precision
-                with torch.amp.autocast("cuda", enabled=False):
+                with torch.amp.autocast("cuda", enabled=True, dtype=torch.float16):
                     # Get camera pose information
                     distill_pred_pose_enc_list = self.distill_camera_head(
                         distill_aggregated_tokens_list
@@ -447,10 +465,10 @@ class EncoderAnySplat(Encoder[EncoderAnySplatCfg]):
         with torch.amp.autocast("cuda", enabled=True, dtype=torch.bfloat16):
             aggregated_tokens_list, patch_start_idx = self.aggregator(
                 image.to(torch.bfloat16),
-                intermediate_layer_idx=self.cfg.intermediate_layer_idx,
+                #intermediate_layer_idx=self.cfg.intermediate_layer_idx,
             )
 
-        with torch.amp.autocast("cuda", enabled=False):
+        with torch.amp.autocast("cuda", enabled=True, dtype=torch.float16):
             pred_pose_enc_list = self.camera_head(aggregated_tokens_list)
             last_pred_pose_enc = pred_pose_enc_list[-1]
             extrinsic, intrinsic = pose_encoding_to_extri_intri(
