@@ -251,7 +251,7 @@ class DatasetDL3DV(Dataset):
             # if self.global_step > 1000:
             #     self.batch_size = 24
             total_frame_size , _ , _ = extrinsics.shape
-            target_indices, context_indices = self.flexible_sample_indices(total_frame_size - 1, self.batch_size // 6 , self.batch_size)
+            target_indices, context_indices = self.flexible_sample_indices(total_frame_size - 1, self.batch_size // 3 , self.batch_size)
             overlap = torch.tensor([0.])
             
             print(f"global_step {self.global_step} scene {scene}, context indices: {context_indices}, target indices: {target_indices}, overlap: {overlap}")

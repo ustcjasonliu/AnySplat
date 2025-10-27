@@ -426,13 +426,15 @@ class ModelWrapper(LightningModule):
                 delta = rendered_rgb - target_gt_img
                 loss_target_rgb = 0.2 * get_cfg()[ 'loss']['mse']['weight'] * torch.nan_to_num((delta**2).mean(), nan=0.0, posinf=0.0, neginf=0.0)
               
-                loss_target_lpips = 0.02 * torch.nan_to_num(self.lpips.forward(rearrange(rendered_rgb, "b v c h w -> (b v) c h w"), 
-                                                                                        rearrange(target_gt_img, "b v c h w -> (b v) c h w"), 
-                                                                                        normalize=True).mean(), 
-                                                                                        nan=0.0, posinf=0.0, neginf=0.0)
+         
 
-                loss_target_ssim = 0.02 * (1 -  self.ssim_loss_module(rearrange(rendered_rgb, "b v c h w -> (b v) c h w"), 
-                                                                     rearrange(target_gt_img, "b v c h w -> (b v) c h w")))                                                                            
+                loss_target_ssim = 0.05 * (1 -  self.ssim_loss_module(rearrange(rendered_rgb, "b v c h w -> (b v) c h w"), 
+                                                                     rearrange(target_gt_img, "b v c h w -> (b v) c h w")))         
+                loss_target_lpips = 0.1 * torch.nan_to_num(self.lpips.forward(rearrange(rendered_rgb, "b v c h w -> (b v) c h w"), 
+                                                                                rearrange(target_gt_img, "b v c h w -> (b v) c h w"), 
+                                                                                normalize=True).mean(), 
+                                                                                nan=0.0, posinf=0.0, neginf=0.0)   
+                                                                                
                 total_loss += loss_target_rgb  + loss_target_ssim + loss_target_lpips
                 global_step_save_folder = str(self.train_cfg.output_path / f"steps_{self.global_step}_train_log")
                 

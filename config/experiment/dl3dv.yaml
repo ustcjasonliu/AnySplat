@@ -63,7 +63,7 @@ trainer:
   precision: bf16-mixed
 
 checkpointing:
-  load: /mnt/public/jason/AnySplat/output/exp_dl3dv/2025-10-24_09-09-24/checkpoints/epoch_7898-step_7900.ckpt
+  load: /mnt/public/jason/AnySplat/output/exp_dl3dv/2025-10-27_14-14-30/checkpoints/epoch_8696-step_8700.ckpt
   every_n_train_steps: 100
   save_weights_only: false
   save_top_k: 5
